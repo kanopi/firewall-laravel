@@ -318,27 +318,6 @@ final class IntegrationDoctor
             );
         }
 
-        $named = $this->pluginsNamingOwnProvider($plugins);
-
-        if ($named !== []) {
-            $findings[] = Diagnosis::error(
-                'Per-plugin challenge providers are not supported under Laravel',
-                sprintf(
-                    'These rules name their own metadata.challenge_provider: %s. In '
-                    . '"exception" mode — which this integration must use — the library throws '
-                    . 'ChallengeRequiredException before rendering, and that exception does '
-                    . 'not carry the matched plugin or its provider. So the default provider '
-                    . '(%s) is rendered instead, and a visitor tripping one of these rules is '
-                    . 'shown the wrong challenge. Use a single challenge.provider for now; '
-                    . 'this needs the exception to carry the provider name, which is a change '
-                    . 'in kanopi/firewall rather than something to work around here.',
-                    implode(', ', $named),
-                    $this->settings->text('firewall.challenge.provider', 'math')
-                ),
-                'docs/plugins/challenges.md'
-            );
-        }
-
         return $findings;
     }
 
@@ -476,36 +455,5 @@ final class IntegrationDoctor
             static fn (array $plugin): bool => ($plugin['response'] ?? null) === 'challenge'
                 && ($plugin['enable'] ?? true) !== false
         ));
-    }
-
-    /**
-     * The names of challenge rules that ask for a provider of their own.
-     *
-     * @param array<int, array<string, mixed>> $plugins
-     *
-     * @return array<int, string>
-     */
-    private function pluginsNamingOwnProvider(array $plugins): array
-    {
-        $default = $this->settings->text('firewall.challenge.provider', 'math');
-        $named = [];
-
-        foreach ($plugins as $index => $plugin) {
-            $metadata = $plugin['metadata'] ?? [];
-            $provider = is_array($metadata) ? ($metadata['challenge_provider'] ?? null) : null;
-
-            if (!is_string($provider) || $provider === '' || $provider === $default) {
-                continue;
-            }
-
-            $name = $plugin['name'] ?? null;
-            $named[] = sprintf(
-                '%s (provider: %s)',
-                is_string($name) && $name !== '' ? $name : 'plugins.' . $index,
-                $provider
-            );
-        }
-
-        return $named;
     }
 }

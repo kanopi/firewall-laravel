@@ -16,6 +16,8 @@ use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Support\Facades\Route;
+use Kanopi\Firewall\Challenge\ChallengeProviderRegistry;
+use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
@@ -266,8 +268,20 @@ final class ServiceProviderTest extends TestCase
     {
         config(['firewall.challenge.secret' => 'long-enough-secret-for-hmac-signing-here']);
 
+        // A provider and render context, because that is what the firewall
+        // raises since 2.26 — and what `renderInterstitial()` needs. An
+        // exception carrying only a message renders an empty body, which would
+        // make this assert nothing.
         Route::get('/manual-challenge', static function (): never {
-            throw new ChallengeRequiredException('Challenge required');
+            $tokens = new TokenManager('long-enough-secret-for-hmac-signing-here', 'math', 'math');
+
+            throw new ChallengeRequiredException(
+                'Challenge required',
+                null,
+                (new ChallengeProviderRegistry($tokens, 'math', []))->get('math'),
+                'math',
+                ['submit_url' => '/_firewall/challenge', 'redirect_to' => '/', 'ttl' => '3600']
+            );
         });
 
         $this->get('/manual-challenge')

@@ -18,6 +18,7 @@ use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
 use Kanopi\Firewall\Exception\FirewallException;
+use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Laravel\Config\TrustedProxies;
 use Kanopi\Firewall\Laravel\Exceptions\IntegrationException;
@@ -92,22 +93,8 @@ class EvaluateFirewall
 
         try {
             $this->container->make(Firewall::class)->evaluate($request);
-        } catch (FirewallBlockedException $blocked) {
-            return $this->responder->block($request, $blocked);
-        } catch (ChallengeSolvedException $solved) {
-            // Ordered most-specific first. All three extend FirewallException
-            // and PHP takes the first clause whose type fits, so the broad
-            // `FirewallException` clause below has to come last or it would
-            // swallow every decision and turn each one into a boot failure.
-            return $this->responder->solved($request, $solved);
-        } catch (ChallengeRequiredException $required) {
-            return $this->responder->challenge($request, $required);
-        } catch (FirewallException $broken) {
-            // Everything left is the firewall failing rather than deciding: a
-            // ConfigurationException from `create()`, a storage backend that
-            // cannot be reached, a challenge rule that matched with no usable
-            // provider. None of them is a verdict about this request.
-            return $this->onBrokenFirewall($request, $next, $broken);
+        } catch (FirewallException $decision) {
+            return $this->respondTo($request, $next, $decision);
         }
 
         // `evaluate()` returns TRUE for an allowed request and never returns
@@ -116,6 +103,68 @@ class EvaluateFirewall
         // branching on, and treating a hypothetical FALSE as a block would
         // invent a decision the library did not make.
         return $next($request);
+    }
+
+    /**
+     * Turn whatever the firewall threw into a response.
+     *
+     * One catch on the base class with an ordered dispatch, rather than a catch
+     * clause per exception. That is deliberate, and 2.26 is why.
+     *
+     * The library's exception set grows: 2.26 added `FirewallRedirectException`
+     * for `response: redirect` and `FirewallLockdownException` for lockdown
+     * mode. A stack of `catch` clauses has to be extended for each one, and
+     * until it is, a new terminal decision falls through to whatever clause
+     * happens to be last — here that was the broken-firewall policy, which
+     * would have turned a redirect rule into a 500.
+     *
+     * It also removes a dependency on something outside this package's control:
+     * `evaluate()`'s `@throws` list. In 2.26.0 that list still names only the
+     * four exceptions that predate `response: redirect`, so static analysis
+     * reading it concludes a `catch (FirewallRedirectException)` is dead code.
+     * It is not — the exception is raised at runtime — but a docblock is a
+     * courtesy for unchecked exceptions, not a contract, and code that depends
+     * on one being exhaustive is depending on the wrong thing.
+     *
+     * Ordered most-specific first, because `FirewallLockdownException` extends
+     * `FirewallBlockedException` and both are handled by `block()`.
+     *
+     * @param Closure(Request): Response $next
+     *
+     * @throws FirewallException
+     */
+    private function respondTo(Request $request, Closure $next, FirewallException $decision): Response
+    {
+        if ($decision instanceof FirewallBlockedException) {
+            // Lockdown arrives here too, by inheritance — upstream made it
+            // extend the block exception so a host that already handled blocks
+            // keeps working when a site enters lockdown. The responder tells
+            // them apart to add `Retry-After`.
+            return $this->responder->block($request, $decision);
+        }
+
+        if ($decision instanceof FirewallRedirectException) {
+            return $this->responder->redirect($decision);
+        }
+
+        if ($decision instanceof ChallengeSolvedException) {
+            return $this->responder->solved($request, $decision);
+        }
+
+        if ($decision instanceof ChallengeRequiredException) {
+            return $this->responder->challenge($request, $decision);
+        }
+
+        // Everything left is the firewall failing rather than deciding: a
+        // ConfigurationException from `create()`, a storage backend that cannot
+        // be reached, a challenge rule that matched with no usable provider.
+        // None of them is a verdict about this request.
+        //
+        // A terminal decision this package has not been taught yet also lands
+        // here, and fails closed by default. That is the safe direction to be
+        // wrong in — and `firewall:doctor` reports the library version, so the
+        // upgrade that introduced it is findable.
+        return $this->onBrokenFirewall($request, $next, $decision);
     }
 
     /**

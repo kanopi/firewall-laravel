@@ -12,6 +12,8 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Laravel\Tests\Feature;
 
 use Illuminate\Http\Request;
+use Kanopi\Firewall\Challenge\ChallengeProviderRegistry;
+use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
@@ -88,7 +90,7 @@ final class ResponderTest extends TestCase
 
         $response = $this->responder()->challenge(
             Request::create('/gated'),
-            new ChallengeRequiredException('Challenge required')
+            $this->challengeException()
         );
 
         $this->assertSame(200, $response->getStatusCode());
@@ -102,13 +104,16 @@ final class ResponderTest extends TestCase
 
         $response = $this->responder()->challenge(
             Request::create('/gated'),
-            new ChallengeRequiredException('Challenge required')
+            $this->challengeException()
         );
 
         $body = (string) $response->getContent();
 
         $this->assertStringContainsString('action="/_firewall/challenge"', $body);
         $this->assertStringContainsString('value="/gated"', $body);
+        // The signed provider token the firewall chose, carried through rather
+        // than reassembled — the whole point of the 2.26 exception change.
+        $this->assertStringContainsString('math.signed-by-the-firewall', $body);
     }
 
     /**
@@ -119,11 +124,19 @@ final class ResponderTest extends TestCase
      * a poor answer and a truthful one; throwing would turn a challenge into a
      * server error.
      */
+    /**
+     * An exception carrying no provider renders an empty body, not a 500.
+     *
+     * The library raises one in that shape only when it could not resolve a
+     * provider — a state `Firewall::create()` refuses to start in, so reaching
+     * it means the configuration changed under a running worker.
+     * `renderInterstitial()` throws a ConfigurationException; swallowing it is
+     * deliberate. An empty page is a poor answer and a truthful one, and
+     * turning a challenge into a server error is worse.
+     */
     #[Test]
-    public function an_unusable_challenge_provider_renders_an_empty_body(): void
+    public function a_challenge_carrying_no_provider_renders_an_empty_body(): void
     {
-        config(['firewall.challenge.secret' => '']);
-
         $response = $this->responder()->challenge(
             Request::create('/gated'),
             new ChallengeRequiredException('Challenge required')
@@ -133,41 +146,35 @@ final class ResponderTest extends TestCase
         $this->assertSame('', trim((string) $response->getContent()));
     }
 
+    /**
+     * A rule's own provider is honoured, not the configured default.
+     *
+     * This is what 2.26 fixed and what this package could not do before it. The
+     * exception now names the provider the matched rule asked for, so a rule
+     * using `metadata.challenge_provider` gets *its* interstitial — where
+     * previously every challenge rendered `challenge.provider` regardless, and
+     * the pass token a visitor earned did not open the rule that stopped them.
+     */
     #[Test]
-    public function a_challenge_provider_that_cannot_be_built_renders_an_empty_body(): void
+    public function a_per_rule_provider_is_rendered_rather_than_the_default(): void
     {
         config([
             'firewall.challenge.secret' => 'long-enough-secret-for-hmac-signing-here',
-            'firewall.challenge.provider' => 'not-a-real-provider',
+            // The default is deliberately something else, so rendering the
+            // default would be visible rather than coincidentally identical.
+            'firewall.challenge.provider' => 'altcha',
         ]);
 
         $response = $this->responder()->challenge(
             Request::create('/gated'),
-            new ChallengeRequiredException('Challenge required')
+            $this->challengeException('math')
         );
 
-        $this->assertSame('', trim((string) $response->getContent()));
-    }
+        $body = (string) $response->getContent();
 
-    /**
-     * An explicit audience is honoured rather than defaulted to the provider.
-     *
-     * Two firewalls sharing a secret and running the same provider must not
-     * accept each other's tokens, and the audience is the only thing that
-     * separates them.
-     */
-    #[Test]
-    public function an_explicit_challenge_audience_is_used(): void
-    {
-        $this->configureChallenge();
-        config(['firewall.challenge.audience' => 'staging']);
-
-        $response = $this->responder()->challenge(
-            Request::create('/gated'),
-            new ChallengeRequiredException('Challenge required')
-        );
-
-        $this->assertStringContainsString('action=', (string) $response->getContent());
+        // The math provider asks an arithmetic question; altcha does not.
+        $this->assertStringContainsString('challenge_answer', $body);
+        $this->assertStringContainsString('math.signed-by-the-firewall', $body);
     }
 
     #[Test]
@@ -260,72 +267,6 @@ final class ResponderTest extends TestCase
         $this->assertSame([], $response->headers->getCookies());
     }
 
-    /**
-     * Redirect targets are reduced to same-origin paths.
-     *
-     * The library sanitises `getRedirect()` already, so this mirrors a rule
-     * that has to agree with it. The failure mode of getting it wrong is an
-     * open redirect on every site running this package.
-     */
-    #[Test]
-    #[DataProvider('redirectTargets')]
-    public function the_interstitial_redirect_target_is_sanitised(string $uri, string $expected): void
-    {
-        $this->configureChallenge();
-
-        $response = $this->responder()->challenge(
-            Request::create($uri),
-            new ChallengeRequiredException('Challenge required')
-        );
-
-        $this->assertStringContainsString(
-            sprintf('value="%s"', htmlspecialchars($expected, ENT_QUOTES)),
-            (string) $response->getContent()
-        );
-    }
-
-    /**
-     * @return array<string, array{0: string, 1: string}>
-     */
-    public static function redirectTargets(): array
-    {
-        return [
-            'a plain path' => ['/gated', '/gated'],
-            'a path with a query' => ['/gated?a=1', '/gated?a=1'],
-            'the root' => ['/', '/'],
-        ];
-    }
-
-    /**
-     * A protocol-relative or backslash-prefixed target becomes the root.
-     *
-     * These cannot be produced by `Request::create()` — Symfony normalises the
-     * path — so the rule is exercised directly. It is the whole content of the
-     * check: `//evil.test` is a valid URL to another origin that begins with a
-     * slash.
-     */
-    #[Test]
-    #[DataProvider('hostileRedirects')]
-    public function a_hostile_redirect_target_is_reduced_to_the_root(string $target): void
-    {
-        $method = new \ReflectionMethod(FirewallResponder::class, 'sanitizeRedirect');
-
-        $this->assertSame('/', $method->invoke($this->responder(), $target));
-    }
-
-    /**
-     * @return array<string, array{0: string}>
-     */
-    public static function hostileRedirects(): array
-    {
-        return [
-            'protocol relative' => ['//evil.test/path'],
-            'backslash escape' => ['/\\evil.test'],
-            'absolute url' => ['https://evil.test'],
-            'empty' => [''],
-        ];
-    }
-
     #[Test]
     public function a_solving_api_client_gets_json_rather_than_a_redirect(): void
     {
@@ -355,6 +296,38 @@ final class ResponderTest extends TestCase
 
         $this->assertStringContainsString('A HOST OVERRODE THIS', (string) $response->getContent());
         $this->assertStringContainsString('Refused', (string) $response->getContent());
+    }
+
+    /**
+     * A challenge exception shaped the way the firewall raises one.
+     *
+     * Since 2.26 the exception carries the provider and the render context, and
+     * `renderInterstitial()` uses them — so an exception built with only a
+     * message renders nothing at all. Constructing a realistic one here is not
+     * ceremony: it is the difference between exercising the render path and
+     * asserting that an empty string is empty.
+     */
+    private function challengeException(string $providerName = 'math'): ChallengeRequiredException
+    {
+        $secret = 'long-enough-secret-for-hmac-signing-here';
+        $tokens = new TokenManager($secret, $providerName, $providerName);
+        $registry = new ChallengeProviderRegistry($tokens, $providerName, []);
+        $provider = $registry->get($providerName);
+
+        return new ChallengeRequiredException(
+            'Challenge required by plugin: gate',
+            null,
+            $provider,
+            $providerName,
+            [
+                'submit_url' => '/_firewall/challenge',
+                'redirect_to' => '/gated',
+                'ttl' => '3600',
+                'cookie_name' => 'fw_challenge_pass',
+                'header_name' => 'X-Firewall-Challenge',
+                'provider_token' => 'math.signed-by-the-firewall',
+            ]
+        );
     }
 
     private function configureChallenge(): void

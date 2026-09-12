@@ -223,48 +223,6 @@ final class IntegrationDoctorTest extends TestCase
         $this->assertFindingMatches(Diagnosis::ERROR, '/no challenge\.secret/', $this->diagnose());
     }
 
-    /**
-     * The one documented gap in this integration, reported rather than hidden.
-     *
-     * In `exception` mode the library throws before rendering and the exception
-     * does not carry the matched plugin, so a per-plugin provider cannot be
-     * honoured. A visitor tripping such a rule would be shown the wrong
-     * challenge — so it is an error here, not a footnote in a README.
-     */
-    #[Test]
-    public function it_reports_a_per_plugin_challenge_provider_as_unsupported(): void
-    {
-        $this->challengeRule(['metadata' => ['challenge_provider' => 'turnstile'], 'name' => 'login-gate']);
-
-        $findings = $this->diagnose();
-
-        $this->assertFindingMatches(Diagnosis::ERROR, '/Per-plugin challenge providers are not supported/', $findings);
-        $this->assertFindingMatches(Diagnosis::ERROR, '/login-gate \(provider: turnstile\)/', $findings);
-    }
-
-    /**
-     * Naming the default provider explicitly is not the unsupported case.
-     *
-     * The limitation is only that the *matched plugin* cannot be identified
-     * from the exception, so a rule asking for the provider that would have
-     * been used anyway loses nothing.
-     */
-    #[Test]
-    public function a_rule_naming_the_default_provider_is_not_reported(): void
-    {
-        $this->challengeRule(['metadata' => ['challenge_provider' => 'math']]);
-
-        $titles = array_map(
-            static fn (Diagnosis $diagnosis): string => $diagnosis->title,
-            $this->errors()
-        );
-
-        $this->assertSame([], array_filter(
-            $titles,
-            static fn (string $title): bool => str_contains($title, 'Per-plugin')
-        ), 'A rule naming the default provider must not be reported as unsupported.');
-    }
-
     #[Test]
     public function a_disabled_challenge_rule_is_ignored(): void
     {
@@ -275,20 +233,21 @@ final class IntegrationDoctorTest extends TestCase
         }
     }
 
+    /**
+     * A rule naming its own provider is no longer reported at all.
+     *
+     * Until 2.26 this was an error: `ChallengeRequiredException` carried no
+     * provider, so the interstitial was always rendered from
+     * `challenge.provider` and a rule asking for a different one showed the
+     * wrong challenge. The exception carries it now, so the check that warned
+     * about it is gone and so is the limitation.
+     */
     #[Test]
-    public function an_unnamed_rule_is_identified_by_its_index(): void
+    public function a_rule_naming_its_own_provider_is_supported(): void
     {
-        config([
-            'firewall.challenge.secret' => 'long-enough-secret-for-hmac-signing-here',
-            'firewall.plugins' => [[
-                'plugin' => \Kanopi\Firewall\Plugins\Url::class,
-                'response' => 'challenge',
-                'metadata' => ['challenge_provider' => 'turnstile'],
-                'config' => ['path:/x'],
-            ]],
-        ]);
+        $this->challengeRule(['metadata' => ['challenge_provider' => 'turnstile'], 'name' => 'login-gate']);
 
-        $this->assertFindingMatches(Diagnosis::ERROR, '/plugins\.0 \(provider: turnstile\)/', $this->diagnose());
+        $this->assertSame([], $this->errors());
     }
 
     #[Test]

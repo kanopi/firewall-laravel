@@ -64,6 +64,42 @@ Initial release. Laravel integration for `kanopi/firewall` ^2.24.
   after it. Paths outside `storage_path()` are left alone and reported by
   `firewall:doctor` instead.
 
+### Requires kanopi/firewall ^2.26
+
+2.26 added three response types and a lockdown mode. Two needed work here.
+
+- **`response: redirect`** raises `FirewallRedirectException`. The middleware
+  now dispatches on the base `FirewallException` and routes by type, rather than
+  enumerating catch clauses — so a decision this package has not been taught yet
+  fails closed under the documented policy instead of falling through whichever
+  clause happens to be last. Unhandled, a redirect rule would have produced a
+  500, or an unfiltered pass-through when configured to fail open.
+- **`mode: lockdown`** is shorthand: the library sets its lockdown flag and
+  rewrites its own mode to `block`, which calls `exit()`. It is translated to
+  `global.lockdown: true` delivered as `exception`. Without that the boot guard
+  refused to start, reporting a failed mode override to an operator who had
+  asked for lockdown and done nothing wrong. `global.lockdown` set directly is
+  passed through untouched, including an explicit `false`.
+- **`FirewallLockdownException`** extends `FirewallBlockedException`, so the
+  block view already rendered it. Refusals now carry `Retry-After`, and the view
+  receives `$retry_after` — a lockdown is temporary and a ban is not.
+- **`response: record` and `response: mark`** are non-terminal and needed no
+  middleware change. Marks reach the application as request attributes because
+  Laravel's own request object is handed to `evaluate()` rather than converted.
+  The three new events reach Laravel listeners through the existing PSR-14
+  bridge.
+
+### Removed
+
+- **The per-plugin challenge provider limitation is gone.** 2.26's
+  `ChallengeRequiredException` carries the provider and render context, so
+  `renderInterstitial()` replaces the provider this package used to rebuild from
+  `challenge.provider` — which rendered the wrong challenge for any rule using
+  `metadata.challenge_provider`, and could not be fixed here because signing the
+  provider token needed a private prefix. The `firewall:doctor` check that
+  reported it as unsupported is removed, as is a redirect sanitiser that
+  duplicated a rule the library now supplies.
+
 ### Fixed during pre-release verification
 
 Both found by installing the package into a real Laravel application. Both were
