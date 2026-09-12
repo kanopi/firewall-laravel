@@ -60,7 +60,8 @@ that cannot run will.
 - [Automating with Artisan](#on-a-schedule)
 - [Octane](#octane)
 - [Fail open or fail closed](#fail-open-or-fail-closed)
-- [Known limitation: per-plugin challenge providers](#known-limitation-per-plugin-challenge-providers)
+- [Response types](#response-types)
+- [Lockdown](#lockdown)
 - [Supported versions](#supported-versions)
 - [Development](#development)
 
@@ -306,8 +307,13 @@ blocked request should not be executing application code or fetching from the
 application it was just refused access to.
 
 `firewall::challenge` is a wrapper, and almost nothing about it is yours to
-change. `$body` is a complete HTML document from the challenge provider, and it
-carries the parts that make the challenge solvable — the form, the signed
+change. `$body` comes from `ChallengeRequiredException::renderInterstitial()`,
+which since 2.26 carries the provider the matched rule asked for and the render
+context the firewall itself would have used — including the signed
+`provider_token` a submission needs. A rule with its own
+`metadata.challenge_provider` therefore gets *its* challenge, not the default
+one. It is a complete HTML document, and it carries the parts that make the
+challenge solvable — the form, the signed
 per-challenge state, the redirect target, the TTL, the JavaScript that stashes
 the token. The default view emits it and nothing else. To brand an interstitial,
 replace the *provider* instead: implement `ChallengeProviderInterface` and name
@@ -757,40 +763,81 @@ production:
 `firewall:doctor` reports any configured-but-unreadable path in `configs`, and
 says whether `require_config` already makes it fatal.
 
-## Known limitation: per-plugin challenge providers
+## Response types
 
-A challenge rule can name its own provider with
-`metadata.challenge_provider`, so a broad heuristic can serve a cheap math
-question while a login brute-force rule serves reCAPTCHA. **That does not work
-under this integration**, and `firewall:doctor` reports it as an error rather
-than leaving a visitor to discover it.
+`kanopi/firewall` 2.26 added three response types beyond allow, block and
+challenge. Each is set with `response` on a rule.
 
-The reason is upstream. In `exception` mode the library throws
-`ChallengeRequiredException` *before* it renders the interstitial, and that
-exception carries only a message — not the plugin that matched, nor the provider
-serving it. So this package rebuilds the provider itself from
-`challenge.provider`, and a rule asking for a different one is rendered with the
-default.
+| `response` | What happens | Handled how |
+|---|---|---|
+| `redirect` | The visitor is sent to `metadata.redirect_to` | Rendered as a Laravel redirect, with the rule's status (302 unless it says otherwise) |
+| `record` | The offence is written down; **the request carries on** | Nothing to do — non-terminal |
+| `mark` | The request is labelled; **it carries on** | Nothing to do — the labels reach your controller |
 
-Everything needed to rebuild the provider is public API (`TokenManager`,
-`ChallengeProviderRegistry`, including the registry's own resolution of flat
-versus per-provider `provider_options`), with one exception: the library's own
-render passes a signed `provider_token` so a submission can say which provider
-it answers, and signing it needs a private domain-separation prefix. Reaching
-into that would couple this package to the library's internals for a value the
-library is willing to do without — a submission carrying no such field is
-verified by `challenge.provider`, which is the documented fallback.
+`redirect` is the gentler end of a terminal decision: a status page or a contact
+form for somebody who believes they were caught wrongly, rather than a block
+that tells them nothing and leaves them nowhere to go. Unlike the challenge
+flow's redirect, the destination may be off-site — it comes from operator-authored
+config, not from the request, so it cannot become an open redirect, and sending
+a caught visitor to a status page on another host is the normal use.
 
-Fixing it properly means `ChallengeRequiredException` carrying the matched
-plugin's provider name, which is a change in `kanopi/firewall`. Nothing
-framework-specific belongs in that package, so it is [an issue to open
-there](https://github.com/kanopi/firewall/issues), not something to work around
-here.
+`record` is what a honeypot needs: catch a scanner on a wired URL and put it on
+the block list for *next* time. Refusing the fetch it is already serving would
+tell the scanner exactly which URL is wired.
 
-Until then: use a single `challenge.provider`. Everything else about the
-challenge flow — the round-trip, the pass token, the cookie attributes, the
-single-use solution consumption, the "wrong answer looks identical to a first
-visit" property — works and is tested end to end.
+`mark` turns the firewall into a signal source. The labels arrive as request
+attributes, and your application reads them with no wiring at all:
+
+```php
+Route::get('/checkout', function (Request $request) {
+    if ($request->attributes->get('firewall.mark.suspicious')) {
+        // extra verification, a slower path, a note on the order
+    }
+});
+```
+
+That works because `Illuminate\Http\Request` is handed to `evaluate()`
+unchanged — the library sets attributes on the same object your controller
+receives. A PSR-7 bridge would have copied the request and thrown the marks
+away, which is the payoff from [not building one](#why-laravel-is-nearly-free).
+
+Name the mark with `metadata.mark_as`, not the rule's `name`: the attribute
+falls back to the *plugin type*, so an unnamed mark is called `URL` — the class
+that matched rather than what it means. `metadata.mark_header` also sets a
+request header, for an application that reads headers rather than attributes.
+
+## Lockdown
+
+Deny by default — nobody is served but an explicit allowlist:
+
+```php
+'global' => [
+    'mode' => 'lockdown',
+    'lockdown_allow' => ['203.0.113.0/24'],
+],
+```
+
+Refusals carry **`Retry-After`**, which is the honest difference from a block: a
+lockdown is temporary by design, and a ban has no truthful answer to "when can I
+come back?". `FirewallLockdownException` extends `FirewallBlockedException`, so
+the block view renders it and receives `$retry_after` to say "try again shortly"
+rather than "you are blocked".
+
+Two details worth knowing:
+
+- **`mode: lockdown` is shorthand.** The library sets its lockdown flag and then
+  rewrites its own mode to `block` — the one mode that calls `exit()`. This
+  package translates it to `global.lockdown: true` delivered as `exception`, so
+  it boots and Laravel renders the refusal. Without that translation the boot
+  guard would refuse to start, reporting a failed mode override to an operator
+  who had done nothing wrong.
+- **`global.lockdown` is an independent axis.** Set it directly and keep any
+  mode you like. This package overrides it only when the *mode* asked for
+  lockdown, so an explicit `'lockdown' => false` is never overwritten.
+
+The lockdown allowlist is **not** a `response: allow` rule. `lockdown_allow` is
+consulted by a gate that sits ahead of the rule buckets, so an allow rule will
+not open a lockdown.
 
 ## Supported versions
 

@@ -57,7 +57,25 @@ final class ConfigTranslator
      * left exactly as configured — reimplementing what `log` mode logs would
      * mean maintaining a second copy of the library's decision reporting.
      */
-    private const RESPONSE_WRITING_MODES = ['block'];
+    private const RESPONSE_WRITING_MODES = ['block', 'lockdown'];
+
+    /**
+     * Modes that mean something beyond how a decision is delivered.
+     *
+     * `lockdown` is two things at once: a policy — refuse everybody but the
+     * allowlist — and a delivery, which the library implements by rewriting its
+     * own mode to `block`. Since 2.26 the policy has its own config key, so the
+     * two can be separated: this integration takes `mode: lockdown` to mean
+     * `global.lockdown: true` with the delivery it can actually use.
+     *
+     * Without this the mode would pass through untouched, the library would
+     * rewrite it to `block`, and `FirewallFactory` would refuse to boot — safe,
+     * but reporting a failed override to an operator who asked for lockdown and
+     * did nothing wrong.
+     *
+     * @var array<string, string>
+     */
+    private const POLICY_MODES = ['lockdown' => '[global][lockdown]'];
 
     /**
      * @param array<string, mixed> $config
@@ -152,7 +170,21 @@ final class ConfigTranslator
      */
     public function overrides(): array
     {
-        return ['[global][mode]' => $this->effectiveMode()->value];
+        $overrides = ['[global][mode]' => $this->effectiveMode()->value];
+
+        // An override rather than merged config, for the same reason the mode
+        // is: `global.lockdown` is what actually refuses every visitor, and a
+        // preset must not be able to reach it. Written only when the mode asked
+        // for it — a host setting `global.lockdown` directly in config keeps
+        // full control, including turning it off, because nothing here
+        // overwrites a value it was not asked to set.
+        $policy = self::POLICY_MODES[$this->configuredMode()->value] ?? null;
+
+        if ($policy !== null) {
+            $overrides[$policy] = true;
+        }
+
+        return $overrides;
     }
 
     /**
@@ -214,6 +246,19 @@ final class ConfigTranslator
     public function modeWasTranslated(): bool
     {
         return $this->configuredMode() !== $this->effectiveMode();
+    }
+
+    /**
+     * Is the firewall being put into lockdown by the configured mode?
+     *
+     * Reported by `firewall:doctor`, because `mode: lockdown` in this config
+     * file and `mode: exception` in the logs is a discrepancy an operator
+     * should be able to look up rather than puzzle over — and because a
+     * deployment refusing every visitor should say so out loud.
+     */
+    public function isLockdownMode(): bool
+    {
+        return array_key_exists($this->configuredMode()->value, self::POLICY_MODES);
     }
 
     /**

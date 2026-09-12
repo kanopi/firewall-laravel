@@ -14,11 +14,12 @@ namespace Kanopi\Firewall\Laravel\Http;
 use Illuminate\Contracts\View\Factory as ViewFactory;
 use Illuminate\Http\Request;
 use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
-use Kanopi\Firewall\Challenge\ChallengeProviderRegistry;
-use Kanopi\Firewall\Challenge\TokenManager;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\FirewallException;
+use Kanopi\Firewall\Exception\FirewallLockdownException;
+use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Laravel\Support\Settings;
 use Symfony\Component\HttpFoundation\Cookie;
 use Symfony\Component\HttpFoundation\Response;
@@ -65,18 +66,79 @@ final class FirewallResponder
     public function block(Request $request, FirewallBlockedException $exception): Response
     {
         $status = $exception->getStatusCode();
+        $headers = $this->retryAfterHeaders($exception);
 
         if ($this->wantsJson($request)) {
             return new \Illuminate\Http\JsonResponse([
                 'message' => $exception->getMessage(),
-            ], $status, $this->noStoreHeaders());
+            ], $status, $headers + $this->noStoreHeaders());
         }
 
         return $this->render(
             $this->viewName('block'),
-            ['message' => $exception->getMessage(), 'status' => $status, 'request' => $request],
-            $status
+            [
+                'message' => $exception->getMessage(),
+                'status' => $status,
+                'request' => $request,
+                // The view can say "try again in a few minutes" rather than
+                // "you are blocked", which is the difference between a lockdown
+                // and a ban for the customer reading it.
+                'retry_after' => $exception instanceof FirewallLockdownException
+                    ? $exception->getRetryAfter()
+                    : null,
+            ],
+            $status,
+            $headers
         );
+    }
+
+    /**
+     * Send the visitor somewhere instead of refusing them.
+     *
+     * `response: redirect`, added in 2.26 — the gentler end of a terminal
+     * decision: a status page, a notice, a contact form for somebody who
+     * believes they were caught wrongly. A block tells a visitor nothing and
+     * leaves them nowhere to go, which is right for a scanner and poor for a
+     * false positive.
+     *
+     * The location is taken from the exception without further sanitising, and
+     * that is deliberate rather than an omission. It comes from the rule's
+     * `metadata.redirect_to` — operator-authored configuration — and the
+     * library never builds it from the request, so it cannot become an open
+     * redirect. Re-sanitising it here would be a second implementation of a
+     * rule that has to agree with the first, and this one would be wrong: an
+     * operator redirecting to another host is doing something legitimate that
+     * the challenge flow's same-origin rule would refuse.
+     */
+    public function redirect(FirewallRedirectException $exception): Response
+    {
+        return new \Illuminate\Http\RedirectResponse(
+            $exception->getLocation(),
+            $exception->getStatusCode(),
+            // A redirect a rule chose is about this visitor right now, so a
+            // shared cache must not serve it to the next one.
+            $this->noStoreHeaders()
+        );
+    }
+
+    /**
+     * `Retry-After`, when the refusal is a lockdown rather than a ban.
+     *
+     * Only lockdown carries one: it is temporary by design, and saying when to
+     * come back is the whole difference from a block. A ban has no honest
+     * answer to that question.
+     *
+     * @return array<string, string>
+     */
+    private function retryAfterHeaders(FirewallBlockedException $exception): array
+    {
+        if (!$exception instanceof FirewallLockdownException) {
+            return [];
+        }
+
+        $retryAfter = $exception->getRetryAfter();
+
+        return $retryAfter > 0 ? ['Retry-After' => (string) $retryAfter] : [];
     }
 
     /**
@@ -111,7 +173,7 @@ final class FirewallResponder
             ], Response::HTTP_FORBIDDEN, $this->noStoreHeaders());
         }
 
-        $body = $this->interstitial($request);
+        $body = $this->interstitial($request, $exception);
 
         return $this->render(
             $this->viewName('challenge'),
@@ -169,84 +231,40 @@ final class FirewallResponder
     }
 
     /**
-     * Render the interstitial body from the configured challenge provider.
+     * Render the interstitial body.
      *
-     * ## Why this rebuilds the provider
+     * One call, because since 2.26 the exception carries everything needed:
+     * the provider that was actually chosen for the matched rule, and the
+     * render context the firewall would have used — including the signed
+     * `provider_token` that tells a submission which provider it answers.
      *
-     * In `exception` mode the library throws `ChallengeRequiredException`
-     * *before* it renders anything, and that exception carries only a message —
-     * not the plugin that matched, nor the provider serving it, nor the TTL.
-     * So the provider has to be constructed here. Every part of that is public
-     * API (`TokenManager`, `ChallengeProviderRegistry`), including the
-     * registry's own resolution of flat versus per-provider `provider_options`,
-     * so this reuses the library's rules rather than restating them.
+     * ## What this replaced, and why it was wrong
      *
-     * ## The one thing it cannot reproduce
+     * Before 2.26 `ChallengeRequiredException` carried only a message, so this
+     * package rebuilt a provider from `challenge.provider` and rendered with a
+     * context it assembled itself. That worked for the common case and was
+     * quietly wrong for the one the feature exists for: a rule naming its own
+     * `metadata.challenge_provider` got the *default* provider's interstitial,
+     * so a visitor was asked to solve the wrong challenge and the pass token
+     * they earned did not open the rule that stopped them. Signing the
+     * provider token needed a private domain-separation prefix, so there was no
+     * way to fix it here — it needed the library change that 2.26 made.
      *
-     * The library's own render passes a `provider_token` — a signed provider
-     * name — so a submission can say which provider it answers. Signing it
-     * needs a private domain-separation prefix, and reaching into that would
-     * couple this package to the library's internals for a value the library
-     * is willing to do without: a submission carrying no such field is
-     * verified by `challenge.provider`, the documented fallback.
-     *
-     * The consequence is exact and worth knowing: a plugin that names its own
-     * `metadata.challenge_provider` will render and verify against the default
-     * provider instead under this integration. `firewall:doctor` reports that
-     * as an error when it finds such a plugin, rather than leaving it to be
-     * discovered by a visitor who cannot get past a challenge.
+     * `firewall:doctor` used to report per-plugin providers as unsupported.
+     * That check is gone, because they are supported now.
      */
-    private function interstitial(Request $request): string
+    private function interstitial(Request $request, ChallengeRequiredException $exception): string
     {
-        $provider = $this->resolveProvider();
-
-        if (!$provider instanceof ChallengeProviderInterface) {
-            // Reached only when a challenge rule matched while the challenge
-            // section is unusable — which `Firewall::create()` refuses to
-            // start with, so it means the config changed under a running
-            // worker. An empty body with the block view is a poor page but a
-            // truthful one; throwing here would turn a challenge into a 500.
-            return '';
-        }
-
-        return $provider->renderInterstitial($request, [
-            'submit_url' => $this->settings->text('firewall.challenge.path', '/_firewall/challenge'),
-            'redirect_to' => $this->sanitizeRedirect($request->getRequestUri()),
-            'ttl' => (string) self::DEFAULT_TTL,
-            'cookie_name' => $this->settings->text('firewall.challenge.cookie_name'),
-            'header_name' => $this->settings->text('firewall.challenge.header_name'),
-        ]);
-    }
-
-    /**
-     * Build the default challenge provider from config.
-     */
-    private function resolveProvider(): ?ChallengeProviderInterface
-    {
-        $secret = $this->settings->text('firewall.challenge.secret');
-        $name = $this->settings->text('firewall.challenge.provider', 'math');
-
-        if ($secret === '') {
-            return null;
-        }
-
-        // Defaults to the provider name when unset, exactly as the library
-        // does. The audience scopes pass tokens to this instance, so two
-        // firewalls sharing a secret do not accept each other's tokens — and
-        // getting it wrong here would mint tokens the firewall then refuses.
-        $audience = trim($this->settings->text('firewall.challenge.audience'));
-
         try {
-            $tokens = new TokenManager($secret, $audience === '' ? $name : $audience, $name);
-            $registry = new ChallengeProviderRegistry(
-                $tokens,
-                $name,
-                $this->settings->section('firewall.challenge.provider_options')
-            );
-
-            return $registry->get($name);
-        } catch (\Throwable) {
-            return null;
+            return $exception->renderInterstitial($request);
+        } catch (FirewallException) {
+            // Thrown when no provider was resolved — which means the firewall
+            // could not have rendered it either, and `Firewall::create()`
+            // refuses to start in that state. Reaching here means the
+            // configuration changed under a running worker. An empty body with
+            // the challenge view is a poor page and a truthful one; throwing
+            // would turn a challenge into a 500.
+            return '';
         }
     }
 
@@ -268,26 +286,6 @@ final class FirewallResponder
         $ttl = max(0, (int) $raw);
 
         return $ttl > 0 ? $ttl : self::DEFAULT_TTL;
-    }
-
-    /**
-     * Reduce a redirect target to a same-origin path.
-     *
-     * Mirrors the library's own `sanitizeRedirect()`, which is not reachable
-     * from here. The rule is small and its failure mode is an open redirect, so
-     * it is restated rather than skipped.
-     */
-    private function sanitizeRedirect(string $target): string
-    {
-        if ($target === '' || $target[0] !== '/') {
-            return '/';
-        }
-
-        if (str_starts_with($target, '//') || str_starts_with($target, '/\\')) {
-            return '/';
-        }
-
-        return $target;
     }
 
     /**
