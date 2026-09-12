@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<ruleset name="Firewall Laravel">
+    <description>Firewall Laravel Integration Coding Standards</description>
+    <rule ref="Generic.Files.LineLength">
+        <properties>
+            <property name="ignoreComments" value="true"/>
+        </properties>
+    </rule>
+
+    <rule ref="PSR1" />
+    <rule ref="PSR2" />
+    <rule ref="PSR12" />
+    <!-- Run against the PHPCompatibility ruleset -->
+    <rule ref="PHPCompatibility"/>
+
+    <!-- Exclude vendor directory -->
+    <exclude-pattern>/vendor/*</exclude-pattern>
+
+    <!-- Ignore warnings -->
+    <arg name="warning-severity" value="0"/>
+
+    <!--
+      Checked from 8.1, not 8.2 as the parent project does. kanopi/firewall
+      declares `php: >=8.1` and Laravel 10 supports 8.1, so 8.1 is inside the
+      overlap this package claims to support and has to be checked.
+    -->
+    <config name="testVersion" value="8.1-"/>
+</ruleset>

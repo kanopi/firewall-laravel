@@ -1,0 +1,19 @@
+vendor
+.idea
+.vscode
+composer.lock
+reports
+.phpunit.result.cache
+.phpunit.cache
+phpcs-report.xml
+phpstan-report.xml
+.env
+.env.local
+.env.*.local
+
+# Testbench's skeleton application, created on demand by the feature suite.
+/vendor/orchestra/testbench-core/laravel/storage/
+
+# The managed rules file `firewall:rule` writes, if a local run points at the
+# default path rather than a temporary one.
+/config/firewall-managed.yml

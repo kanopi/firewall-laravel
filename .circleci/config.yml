@@ -1,0 +1,218 @@
+version: 2.1
+
+# Matched to the parent project's shape — same tools, same 100% coverage gate,
+# same "ratchet, not a target" reasoning — with one addition it does not need:
+# a Laravel matrix. The library has one framework-agnostic surface to test
+# against; this package has several framework versions, and the things most
+# likely to break across them are exactly the ones it depends on (a protected
+# static on TrustProxies, `pushMiddleware()` on the HTTP kernel, scoped
+# container bindings).
+#
+# Notably absent: PHP 8.1, and Laravel 10 and 11. See the "Supported versions"
+# section of the README — every 10.x and 11.x release currently carries
+# unresolved security advisories, so Composer's default audit refuses to
+# install them and CI cannot honestly claim to test them. PHP 8.1 has no
+# installable Laravel at all: 12 needs 8.2 and 13 needs 8.3.
+#
+# The same grid runs locally in Docker via `composer test:matrix`, which is what
+# a developer uses to check a PHP version they do not have installed. The two
+# are kept deliberately in step — if a cell is added here, add it there.
+
+PHP_VERSION: &PHP_VERSION "8.3"
+
+jobs:
+  static-analysis:
+    docker:
+      - image: cimg/php:8.3
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Install Dependencies
+          command: composer install --no-interaction --prefer-dist
+      - run:
+          name: Coding Standards
+          command: composer check:code
+      - run:
+          name: Static Analysis
+          command: composer check:security
+
+  phpunit:
+    parameters:
+      php:
+        type: string
+        default: *PHP_VERSION
+      laravel:
+        type: string
+        default: "^13.0"
+    docker:
+      - image: cimg/php:<< parameters.php >>
+    resource_class: small
+    environment:
+      PHP_VERSION: << parameters.php >>
+      LARAVEL_VERSION: << parameters.laravel >>
+    steps:
+      - checkout
+      - run:
+          name: Install Xdebug
+          # `cimg/php` ships no coverage driver — neither Xdebug nor PCOV — and
+          # this job is the only one that needs one. Without it the failure is
+          # far worse than a missing report: `phpunit.xml` declares `<coverage>`
+          # and `failOnWarning="true"`, so PHPUnit raises "No code coverage
+          # driver available" and executes **zero tests**. The first pipeline on
+          # this repository failed that way in all seven phpunit jobs, having
+          # tested nothing at all.
+          #
+          # Xdebug rather than the faster PCOV, to match the parent project,
+          # which installs it exactly like this. This suite runs in seconds, so
+          # the difference is noise and consistency between the two repositories
+          # is worth more.
+          command: |
+            sudo pecl update-channels
+            sudo pecl install xdebug
+            php -m | grep -qi xdebug \
+              || { echo "Xdebug did not enable; coverage would silently run no tests."; exit 1; }
+      - run:
+          name: Install Dependencies
+          command: |
+            # The Laravel version is pinned without writing it into
+            # composer.json: `--with` constrains this resolution only, so the
+            # published constraint stays as wide as the code actually supports.
+            composer update --no-interaction --prefer-dist \
+              --with "laravel/framework:${LARAVEL_VERSION}"
+
+            # One package per invocation: `composer show` takes at most a
+            # package and a version, so passing three names is a usage error
+            # that exits 1 and fails the job before a single test runs. Printed
+            # at all because a matrix job is worth nothing if the log does not
+            # say what it actually resolved.
+            for package in laravel/framework orchestra/testbench kanopi/firewall; do
+              composer show "${package}" | grep -E '^(name|versions)'
+            done
+      - run:
+          name: PHPUnit
+          command: composer test:gate
+      - run:
+          name: Check Coverage
+          command: |
+            # A floor of 100 is a real constraint, not a vanity number: any new
+            # branch has to arrive with a test, or with the defensive code
+            # restructured so there is no unreachable branch to cover. Both of
+            # those force the argument to be written down where a reviewer sees
+            # it, which is the point.
+            #
+            # Achieved at 100.00% for lines and methods with no service
+            # containers, which is deliberate: the suite runs against
+            # InMemoryStorage, so a developer machine reports the same figure
+            # CI does. The library's own suite cannot — its Redis-backed
+            # classes need the extension and a server — and the difference is
+            # worth knowing when comparing the two.
+            #
+            # Lines and methods are both compared. Methods alone are not
+            # enough, and lines alone are not either: a new method whose lines
+            # happen to be covered by another path slips through a lines-only
+            # gate.
+            #
+            # Classes are deliberately not gated. Anonymous classes in the test
+            # fixtures inflate the numerator, so the figure does not mean what
+            # it says.
+            PASSING=100
+            php -d display_errors=stderr -r '
+              $min = (float) $argv[1];
+              $xml = simplexml_load_file("reports/xml/index.xml");
+              if ($xml === false) {
+                fwrite(STDERR, "Could not read reports/xml/index.xml — did the coverage run produce a report?\n");
+                exit(1);
+              }
+              $totals = $xml->project->directory->totals;
+              // The denominator is named differently per metric — lines carry
+              // `executable`, methods carry `count` — so it is stated rather
+              // than guessed.
+              $metrics = ["lines" => "executable", "methods" => "count"];
+              $failed = false;
+              $measured = 0;
+              foreach ($metrics as $metric => $denominator) {
+                $node = $totals->{$metric};
+                if ($node === null || (int) $node[$denominator] === 0) {
+                  continue;
+                }
+                ++$measured;
+                $pct = (float) $node["percent"];
+                // Printed whether it passed or not. Reporting only the failure
+                // is how a metric drifts for weeks without anyone seeing it move.
+                printf("%s coverage %.2f%% against a %.2f%% floor.\n", ucfirst($metric), $pct, $min);
+                if ($pct < $min) {
+                  $failed = true;
+                }
+              }
+              if ($measured === 0) {
+                fwrite(STDERR, "The coverage report contained neither lines nor methods.\n");
+                exit(1);
+              }
+              exit($failed ? 1 : 0);
+            ' "${PASSING}"
+      - store_test_results:
+          path: reports/junit.xml
+      - store_artifacts:
+          path: reports
+
+  install:
+    parameters:
+      php:
+        type: string
+        default: *PHP_VERSION
+      laravel:
+        type: string
+        default: ""
+    docker:
+      - image: cimg/php:<< parameters.php >>
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Install into a real Laravel application
+          # Creates a Laravel app, installs this package from the checkout,
+          # publishes the config and drives the result over HTTP through
+          # `artisan serve`. It catches the class of defect the PHPUnit suites
+          # structurally cannot: Composer never runs there, storage is
+          # in-memory, and the SAPI is `cli` rather than `cli-server`. Both
+          # bugs found so far in this package — a missing storage directory
+          # that 500'd every request of a clean install, and a default log
+          # channel that resolved to NULL — were invisible to a green suite and
+          # obvious here.
+          command: bash tests/Integration/install.sh << parameters.laravel >>
+          no_output_timeout: 15m
+
+workflows:
+  version: 2
+  test:
+    jobs:
+      - static-analysis
+      - phpunit:
+          name: phpunit-php<< matrix.php >>-laravel12
+          matrix:
+            parameters:
+              php: ['8.2', '8.3', '8.4', '8.5']
+              laravel: ['^12.0']
+      - phpunit:
+          # Laravel 13 requires PHP 8.3, so 8.2 is absent from this matrix
+          # rather than expected to fail.
+          name: phpunit-php<< matrix.php >>-laravel13
+          matrix:
+            parameters:
+              php: ['8.3', '8.4', '8.5']
+              laravel: ['^13.0']
+      # One PHP version per Laravel version rather than the full cross-product.
+      # This job builds a whole application and serves HTTP, so it is the
+      # slowest thing here; what it exercises — Composer discovery, publishing,
+      # the SAPI, real storage — varies with the framework version and barely
+      # with the PHP one, which the phpunit matrix above already covers
+      # thoroughly.
+      - install:
+          name: install-php8.2-laravel12
+          php: '8.2'
+          laravel: '^12.0'
+      - install:
+          name: install-php8.3-laravel13
+          php: '8.3'
+          laravel: '^13.0'

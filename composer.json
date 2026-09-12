@@ -1,0 +1,111 @@
+{
+    "name": "kanopi/firewall-laravel",
+    "description": "Laravel integration for kanopi/firewall: middleware, config, Artisan commands and event wiring.",
+    "type": "library",
+    "keywords": [
+        "laravel",
+        "firewall",
+        "middleware",
+        "security",
+        "waf",
+        "rate-limiting"
+    ],
+    "authors": [
+        {
+            "name": "Sean Dietrich",
+            "email": "sean@kanopi.com"
+        },
+        {
+            "name": "Kanopi Studios Engineers",
+            "homepage": "https://kanopi.com/about-us/"
+        }
+    ],
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "illuminate/console": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/contracts": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/http": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/support": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "kanopi/firewall": "^2.24",
+        "psr/event-dispatcher": "^1.0",
+        "symfony/process": "~6.4 || ~7.3 || ~8.1",
+        "symfony/yaml": "~6.4 || ~7.3 || ~8.1"
+    },
+    "require-dev": {
+        "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
+        "orchestra/testbench": "^8.0 || ^9.0 || ^10.0 || ^11.0",
+        "phpcompatibility/php-compatibility": "^9.3",
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^10.5 || ^11.5 || ^12.0",
+        "squizlabs/php_codesniffer": "^3.13"
+    },
+    "suggest": {
+        "laravel/octane": "Supported, with one caveat worth reading: see the Octane section of the README before you enable persist_instance.",
+        "ext-redis": "Required by the firewall's Redis storage and Redis rate-limit backends, for a block list shared across more than one server."
+    },
+    "autoload": {
+        "psr-4": {
+            "Kanopi\\Firewall\\Laravel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Kanopi\\Firewall\\Laravel\\Tests\\": "tests/",
+            "App\\": "tests/Laravel/app/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Kanopi\\Firewall\\Laravel\\FirewallServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "check:code": "vendor/bin/phpcs --standard=phpcs_ruleset.xml src",
+        "fix:code": "vendor/bin/phpcbf --standard=phpcs_ruleset.xml src",
+        "check:security": "vendor/bin/phpstan analyse src --level max --memory-limit=-1",
+        "phpunit": "@phpunit:coverage",
+        "phpunit:coverage": [
+            "@check:coverage-driver",
+            "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --do-not-cache-result"
+        ],
+        "phpunit:unit": "vendor/bin/phpunit -c ./phpunit.xml --testsuite unit --do-not-cache-result --no-coverage",
+        "phpunit:feature": "vendor/bin/phpunit -c ./phpunit.xml --testsuite feature --do-not-cache-result --no-coverage",
+        "cs": "@check:code",
+        "cs:fix": "@fix:code",
+        "stan": "@check:security",
+        "check": [
+            "@check:code",
+            "@check:security"
+        ],
+        "test": [
+            "@phpunit:unit",
+            "@phpunit:feature"
+        ],
+        "test:gate": "@phpunit:coverage",
+        "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --coverage-html reports/ --coverage-text",
+        "test:install": "bash tests/Integration/install.sh",
+        "test:matrix": "bash tests/Integration/matrix.sh",
+        "check:coverage-driver": "@php tests/Integration/require-coverage-driver.php",
+        "test:ci": "bash tests/Integration/ci-job.sh"
+    },
+    "scripts-descriptions": {
+        "phpunit:coverage": "Run both suites in a single pass with coverage. Coverage MUST be measured across both suites: the middleware and the service provider are only exercised end to end by the feature suite, and the unit suite alone understates them badly.",
+        "test:gate": "Alias for phpunit:coverage \u2014 the run the CI coverage gate reads",
+        "test:install": "Install the package into a freshly created Laravel application and drive it over HTTP. Slow (it runs composer create-project) and the only test that exercises Composer discovery, vendor:publish, real file storage and the cli-server SAPI \u2014 the four things Testbench cannot.",
+        "test:matrix": "Run the suite against every supported PHP and Laravel combination in Docker. Slow, and the only way to check a PHP version this machine does not have installed \u2014 it is what produced the support table in the README.",
+        "check:coverage-driver": "Fail with an explanation when no coverage driver is loaded. Without it PHPUnit reports \"No tests executed!\", which names the symptom rather than the missing extension \u2014 the first CI run on this repository failed that way in seven jobs.",
+        "test:ci": "Run a CircleCI job's own commands inside the image CI uses, before pushing. The first two pipelines on this repository each failed on a different fault in the CI config, one per push \u2014 this is the loop that catches them in one pass instead."
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    },
+    "prefer-stable": true,
+    "minimum-stability": "stable"
+}
