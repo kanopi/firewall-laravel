@@ -843,38 +843,40 @@ not open a lockdown.
 
 | PHP | Laravel 12 | Laravel 13 |
 |---|---|---|
-| 8.1 | not installable | not installable |
-| 8.2 | ✅ 316 tests | not installable (needs 8.3) |
-| 8.3 | ✅ 316 tests | ✅ 316 tests |
-| 8.4 | ✅ 316 tests | ✅ 316 tests |
-| 8.5 | ✅ 316 tests | ✅ 316 tests |
+| 8.2 | ✅ 327 tests | needs PHP 8.3 |
+| 8.3 | ✅ 327 tests | ✅ 327 tests |
+| 8.4 | ✅ 327 tests | ✅ 327 tests |
+| 8.5 | ✅ 327 tests | ✅ 327 tests |
 
-Measured, not asserted: every ✅ above is a run of the full suite in a container
-for that PHP version, against `laravel/framework` pinned to that major. Reproduce
-it with `composer test:matrix`, which is what produced the table.
+Measured, not asserted: every ✅ is a run of the full suite in a container for
+that PHP version, against `laravel/framework` pinned to that major. Reproduce it
+with `composer test:matrix`, which is what produced the table.
 
-Exact versions at the time of writing: `laravel/framework` v12.69.2 and
-v13.31.0, `kanopi/firewall` 2.24.0, PHP 8.2.32 / 8.3.32 / 8.4.23 / 8.5.8 (the
-official `php:<version>-cli` images).
+Exact versions at 1.0.0: `laravel/framework` v12.69.2 and v13.31.0,
+`kanopi/firewall` 2.26.0, PHP 8.2.32 / 8.3.32 / 8.4.23 / 8.5.8 (the official
+`php:<version>-cli` images).
 
-The published constraint is wider than that table — `^10.0 || ^11.0 || ^12.0 ||
-^13.0` — and the honest reason is worth stating rather than leaving as a
-mismatch somebody discovers.
+### Why not Laravel 10 or 11
 
-The code genuinely supports Laravel 10 and 11: everything it touches
-(`pushMiddleware()`, scoped container bindings, `renderable()`, and all three of
-Laravel's trusted-proxy mechanisms including the Laravel 10 middleware property)
-exists in both, and the Laravel 10 path has its own tests. But **every 10.x and
-11.x release currently carries unresolved security advisories**, so Composer's
-default `audit.block-insecure` refuses to install them. A project with a
-pre-existing lock file, or one that has deliberately relaxed that setting, can
-use this package on those versions; neither CI nor the local matrix can install
-them, so neither claims to test them.
+The code would very likely work — everything it touches (`pushMiddleware()`,
+scoped bindings, `renderable()`, and all three of Laravel's trusted-proxy
+mechanisms including the Laravel 10 middleware property) exists in both, and
+the Laravel 10 proxy path has its own tests.
 
-`php: >=8.1` is published because that is what the library requires and the code
-is 8.1-compatible (PHPCS checks it against 8.1). In practice PHP 8.1 has no
-installable Laravel at all, which is why it appears in the matrix and skips: 12
-needs 8.2, 13 needs 8.3, and 10 and 11 are blocked as above.
+They are excluded because **every 10.x and 11.x release currently carries
+unresolved security advisories**, so Composer's default `audit.block-insecure`
+refuses to install them. Neither CI nor the local matrix can install them, so
+neither can test them — and a constraint is a promise.
+
+The asymmetry decided it: under semver, *widening* a constraint later is a minor
+release and *narrowing* one is a major release. Starting narrow costs nothing
+today and can be relaxed in a 1.x whenever those versions become installable, or
+when Laravel 14 lands.
+
+`php: >=8.2` for the same reason. The code is 8.1-compatible — PHPCS checks it
+against 8.1, and `kanopi/firewall` itself allows 8.1 — but no Laravel this
+package supports can be installed there, so claiming it would be a promise
+nothing can keep.
 
 ## Development
 

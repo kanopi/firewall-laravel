@@ -38,11 +38,10 @@ set -uo pipefail
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_PREFIX="kanopi-firewall-laravel-test"
 
-# The cells. PHP 8.1 is present and expected to skip: the package declares
-# `php: >=8.1` because its own code is 8.1-compatible, and no Laravel this
-# package supports can be installed there — 12 needs 8.2, 13 needs 8.3, and
-# 10 and 11 are blocked by unresolved security advisories. Listing it makes
-# that a measured fact in the output rather than a footnote.
+# The cells. 8.1 is listed although the package requires 8.2, so that the floor
+# is a measured fact in the output rather than a footnote — it skips, and the
+# reason is printed. Laravel 10 and 11 are absent because no cell could install
+# them: every release of both carries unresolved security advisories.
 PHP_VERSIONS=(8.1 8.2 8.3 8.4 8.5)
 LARAVEL_CONSTRAINTS=('^12.0' '^13.0')
 
