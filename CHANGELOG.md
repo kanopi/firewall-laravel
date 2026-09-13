@@ -5,11 +5,11 @@ All notable changes to `kanopi/firewall-laravel` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.0.0) — 2026-09-12
 
 ### Added
 
-Initial release. Laravel integration for `kanopi/firewall` ^2.24.
+Initial release. Laravel integration for `kanopi/firewall` ^2.26.
 
 - **`EvaluateFirewall` middleware**, registered into the global stack after
   `TrustProxies`. `Illuminate\Http\Request` is passed to `evaluate()` unchanged —
@@ -165,7 +165,8 @@ invisible to a fully green PHPUnit suite, which is why
   an error by `firewall:doctor`. `ChallengeRequiredException` does not carry the
   matched plugin, so the interstitial can only be rendered from
   `challenge.provider`. Fixing it needs a change in `kanopi/firewall`.
-- Laravel 10 and 11 are within the published constraint and covered by the code,
-  but every release of both currently carries unresolved security advisories, so
-  Composer's default audit refuses to install them and CI does not claim to test
-  them.
+- Laravel 10 and 11 are **not** in the published constraint, and `php: >=8.2`
+  rather than the library's own `>=8.1`. Every 10.x and 11.x release currently
+  carries unresolved security advisories, so Composer's default audit refuses to
+  install them — nothing can test them, and a constraint is a promise. Widening
+  later is a minor release; narrowing is a major one, so 1.0.0 starts narrow.

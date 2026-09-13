@@ -20,9 +20,9 @@
     <arg name="warning-severity" value="0"/>
 
     <!--
-      Checked from 8.1, not 8.2 as the parent project does. kanopi/firewall
-      declares `php: >=8.1` and Laravel 10 supports 8.1, so 8.1 is inside the
-      overlap this package claims to support and has to be checked.
+      8.2, matching this package's own `php: >=8.2`. It was 8.1 while the
+      constraint allowed Laravel 10 — checking a floor the package no longer
+      supports would reject syntax it is now entitled to use.
     -->
-    <config name="testVersion" value="8.1-"/>
+    <config name="testVersion" value="8.2-"/>
 </ruleset>
