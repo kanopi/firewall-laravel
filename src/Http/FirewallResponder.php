@@ -325,6 +325,15 @@ final class FirewallResponder
     private function render(string $view, array $data, int $status, array $headers = []): Response
     {
         if (!$this->views->exists($view)) {
+            // The challenge interstitial is the page itself — a form the
+            // visitor has to submit — so it is served as it is. Falling back
+            // to the (absent) message instead used to hand every challenged
+            // visitor a blank page with nothing to solve (#6). The body is the
+            // library's own rendering, already escaped where it carries input.
+            if (isset($data['body']) && is_string($data['body']) && $data['body'] !== '') {
+                return new Response($data['body'], $status, ['Content-Type' => 'text/html; charset=utf-8'] + $headers);
+            }
+
             $message = isset($data['message']) && is_string($data['message'])
                 ? $data['message']
                 : '';

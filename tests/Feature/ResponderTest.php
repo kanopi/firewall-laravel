@@ -82,8 +82,15 @@ final class ResponderTest extends TestCase
         $this->assertStringStartsWith('text/plain', (string) $response->headers->get('Content-Type'));
     }
 
+    /**
+     * A missing challenge view still serves a challenge the visitor can solve (#6).
+     *
+     * It used to fall back to the exception's message — which the challenge
+     * path never sets — so every challenged visitor got a blank page with
+     * nothing to submit, a lockout caused by a typo in `firewall.views`.
+     */
     #[Test]
-    public function a_missing_challenge_view_falls_back_without_a_message(): void
+    public function a_missing_challenge_view_still_serves_the_interstitial(): void
     {
         config(['firewall.views.challenge' => 'no-such-view']);
         $this->configureChallenge();
@@ -91,6 +98,25 @@ final class ResponderTest extends TestCase
         $response = $this->responder()->challenge(
             Request::create('/gated'),
             $this->challengeException()
+        );
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertStringStartsWith('text/html', (string) $response->headers->get('Content-Type'));
+        $this->assertStringContainsString('challenge_answer', (string) $response->getContent());
+        $this->assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
+    }
+
+    /**
+     * With neither a view nor an interstitial, the fallback is still an empty page, not a 500.
+     */
+    #[Test]
+    public function a_missing_challenge_view_with_nothing_to_render_is_empty(): void
+    {
+        config(['firewall.views.challenge' => 'no-such-view']);
+
+        $response = $this->responder()->challenge(
+            Request::create('/gated'),
+            new ChallengeRequiredException('Challenge required')
         );
 
         $this->assertSame(200, $response->getStatusCode());
