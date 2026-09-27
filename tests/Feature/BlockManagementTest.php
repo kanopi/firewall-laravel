@@ -146,6 +146,20 @@ final class BlockManagementTest extends TestCase
     }
 
     /**
+     * A negative duration is refused, not turned into a permanent block (#9).
+     */
+    #[Test]
+    public function a_negative_duration_is_refused(): void
+    {
+        $this->artisan('firewall:block', ['ip' => '203.0.113.9', '--duration' => '-60'])
+            ->expectsOutputToContain('--duration must be zero')
+            ->assertExitCode(FirewallCommand::EXIT_CONFIG_UNREADABLE);
+
+        $this->artisan('firewall:blocks', ['--list' => true])
+            ->doesntExpectOutputToContain('203.0.113.9');
+    }
+
+    /**
      * A non-numeric duration falls back to an hour, not to zero.
      *
      * `(int) 'an hour'` is 0, and 0 means permanent — so a typo would silently

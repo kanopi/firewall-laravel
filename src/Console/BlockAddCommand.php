@@ -53,11 +53,20 @@ final class BlockAddCommand extends Command
     {
         $ip = $this->argument('ip');
         $reason = $this->option('reason');
+        $duration = $this->duration();
+
+        if ($duration === null) {
+            // Refused rather than clamped: `max(0, …)` turned `--duration=-60`
+            // into 0, which is "until somebody lifts it" (#9).
+            $this->components->error('--duration must be zero (no expiry) or a positive number of seconds.');
+
+            return FirewallCommand::EXIT_CONFIG_UNREADABLE;
+        }
 
         try {
             $result = $blocks->add(
                 is_string($ip) ? $ip : '',
-                $this->duration(),
+                $duration,
                 is_string($reason) ? $reason : '',
                 (bool) $this->option('force')
             );
@@ -93,11 +102,20 @@ final class BlockAddCommand extends Command
      * A non-numeric `--duration` becomes the default hour rather than `0`,
      * which `(int)` would have produced — and `0` means "until somebody lifts
      * it". A typo should not silently create a permanent block.
+     *
+     * @return ?int
+     *   NULL for a negative number, which the caller refuses. Clamping it to
+     *   `0` made `--duration=-60` a permanent block, the exact outcome this
+     *   method exists to prevent.
      */
-    private function duration(): int
+    private function duration(): ?int
     {
         $duration = $this->option('duration');
 
-        return is_string($duration) && is_numeric($duration) ? max(0, (int) $duration) : 3600;
+        if (!is_string($duration) || !is_numeric($duration)) {
+            return 3600;
+        }
+
+        return (int) $duration < 0 ? null : (int) $duration;
     }
 }
