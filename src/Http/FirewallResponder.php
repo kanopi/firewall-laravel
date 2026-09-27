@@ -78,14 +78,14 @@ final class FirewallResponder
 
         if ($this->wantsJson($request)) {
             return new \Illuminate\Http\JsonResponse([
-                'message' => $exception->getMessage(),
+                'message' => $this->plainMessage($exception),
             ], $status, $headers + $this->noStoreHeaders());
         }
 
         return $this->render(
             $this->viewName('block'),
             [
-                'message' => $exception->getMessage(),
+                'message' => $this->plainMessage($exception),
                 'status' => $status,
                 'request' => $request,
                 // The view can say "try again in a few minutes" rather than
@@ -175,7 +175,7 @@ final class FirewallResponder
             return new \Illuminate\Http\JsonResponse([
                 'message' => $exception->getMessage(),
                 'challenge' => [
-                    'path' => $this->settings->text('firewall.challenge.path', '/_firewall/challenge'),
+                    'path' => $this->submitUrl($exception),
                     'header' => $this->settings->text('firewall.challenge.header_name'),
                 ],
             ], Response::HTTP_FORBIDDEN, $this->noStoreHeaders());
@@ -236,6 +236,40 @@ final class FirewallResponder
         }
 
         return $response;
+    }
+
+    /**
+     * The banning message as plain text.
+     *
+     * The library HTML-escapes every request value it interpolates into the
+     * message (`{path}`, `{ip}` and the rest), because in `block` mode it
+     * writes the message straight into its own page. Here it is escaped again
+     * by Blade, so a path with an apostrophe rendered as `&#039;` and the JSON
+     * `message` carried entities too (#14). Decoded once, it is plain text:
+     * Blade escapes it exactly once, and JSON and text clients get it as
+     * written.
+     */
+    private function plainMessage(FirewallException $exception): string
+    {
+        return html_entity_decode($exception->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
+    /**
+     * Where a client should POST its solution, as the firewall itself computes it.
+     *
+     * Read from the exception's render context — the same value the
+     * interstitial's form posts to — so it honours `challenge.submit_url` and
+     * a site served from a subdirectory (2.29). The configured `path` alone
+     * would 404 there (#14). The path is the fallback for an exception raised
+     * without a context.
+     */
+    private function submitUrl(ChallengeRequiredException $exception): string
+    {
+        $submitUrl = $exception->getRenderContext()['submit_url'] ?? null;
+
+        return is_string($submitUrl) && $submitUrl !== ''
+            ? $submitUrl
+            : $this->settings->text('firewall.challenge.path', '/_firewall/challenge');
     }
 
     /**
