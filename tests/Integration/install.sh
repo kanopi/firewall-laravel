@@ -270,6 +270,28 @@ if php artisan firewall:check --url=/wp-login.php --ip=203.0.113.9 > /dev/null 2
 fi
 pass "firewall:check agrees that /wp-login.php would be blocked"
 
+step "Running cached, the way production does"
+# `php artisan optimize` caches config, routes, events and views: the standard
+# production deploy step, and one no PHPUnit suite can take, because Testbench
+# builds route and config caches from its own skeleton rather than from an
+# application that has this package installed. Two things in particular only
+# show here: the dedicated challenge route is a closure, which has to survive
+# route caching, and the firewall has to build from a cached config (#17).
+stop_server
+php artisan optimize > /dev/null 2>&1 || fail "php artisan optimize failed with the package installed"
+pass "php artisan optimize succeeds"
+assert_contains "$(php artisan route:list --path=_firewall 2>&1)" "firewall.challenge" \
+    "the challenge route is in the route cache"
+start_server
+assert_eq "200" "$(status_of /)" "a normal request is served from cached config and routes"
+assert_eq "400" "$(status_of /wp-login.php)" "a probe is blocked from cached config and routes"
+php artisan firewall:unblock --all > /dev/null 2>&1 || true
+# Cleared before the next step, which edits config/firewall.php: a cached
+# config would go on serving the old one and the edit would prove nothing.
+stop_server
+php artisan optimize:clear > /dev/null 2>&1 || fail "php artisan optimize:clear failed"
+start_server
+
 step "Observing without enforcing"
 # `log` mode is the assertion that matters most here, and it can only be made
 # over HTTP. Under the `cli` SAPI the library returns before evaluating anything,
