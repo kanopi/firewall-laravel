@@ -15,9 +15,12 @@ use Illuminate\Support\Facades\Artisan;
 use Kanopi\Firewall\Laravel\Console\FirewallCommand;
 use Kanopi\Firewall\Laravel\Exceptions\IntegrationException;
 use Kanopi\Firewall\Laravel\Support\BlockManager;
-use Kanopi\Firewall\Laravel\Tests\TestCase;
+use Kanopi\Firewall\Laravel\Tests\Fixtures\GappedStorage;
 use Kanopi\Firewall\Laravel\Tests\Fixtures\NonQueryableStorage;
+use Kanopi\Firewall\Laravel\Tests\TestCase;
 use Kanopi\Firewall\Storage\FileStorage;
+use Kanopi\Firewall\Storage\SharedStorage;
+use Kanopi\Firewall\Utility\DegradedBackends;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -286,6 +289,19 @@ final class BlockManagementTest extends TestCase
     }
 
     #[Test]
+    public function a_dry_run_range_lift_counts_and_changes_nothing(): void
+    {
+        $this->manager()->add('203.0.113.9', 3600);
+        $this->manager()->add('203.0.113.10', 3600);
+
+        $this->artisan('firewall:unblock', ['ip' => '203.0.113.0/24', '--dry-run' => true])
+            ->expectsOutputToContain('Would lift 2 blocks')
+            ->assertExitCode(FirewallCommand::EXIT_OK);
+
+        $this->assertCount(2, $this->manager()->all());
+    }
+
+    #[Test]
     public function it_empties_the_list(): void
     {
         $this->manager()->add('203.0.113.9', 3600);
@@ -499,9 +515,94 @@ final class BlockManagementTest extends TestCase
     {
         $this->useNonQueryableStorage();
 
-        $this->artisan('firewall:unblock', ['ip' => '203.0.113.9'])
+        $this->artisan('firewall:unblock', ['ip' => '203.0.113.0/24'])
             ->expectsOutputToContain('cannot be queried')
             ->assertExitCode(FirewallCommand::EXIT_ERROR);
+    }
+
+    /**
+     * One exact address is a key lookup, so it can be lifted from any backend (#20).
+     *
+     * A `SharedStorage` cannot enumerate, and used to be refused outright with
+     * advice to switch backends — for an operation that never needed
+     * enumeration.
+     */
+    #[Test]
+    public function an_exact_address_is_lifted_from_a_backend_that_cannot_be_queried(): void
+    {
+        $this->useSharedFileStorage();
+
+        $this->artisan('firewall:block', ['ip' => '203.0.113.9'])->assertExitCode(FirewallCommand::EXIT_OK);
+
+        $this->artisan('firewall:unblock', ['ip' => '203.0.113.9'])
+            ->expectsOutputToContain('Lifted 1 block')
+            ->assertExitCode(FirewallCommand::EXIT_OK);
+
+        $this->assertSame(0, $this->manager()->remove('203.0.113.9', dryRun: true), 'The block is still there.');
+    }
+
+    /**
+     * A block written while the shared store is down says it is local only (#21).
+     */
+    #[Test]
+    public function a_block_written_to_the_local_copy_only_says_so(): void
+    {
+        $this->useSharedFileStorage(sharedDown: true);
+
+        try {
+            $this->artisan('firewall:block', ['ip' => '203.0.113.9'])
+                ->expectsOutputToContain('local copy only')
+                ->assertExitCode(FirewallCommand::EXIT_OK);
+        } finally {
+            DegradedBackends::reset();
+        }
+    }
+
+    #[Test]
+    public function a_block_written_to_the_shared_store_does_not_warn(): void
+    {
+        $this->useSharedFileStorage();
+
+        $this->artisan('firewall:block', ['ip' => '203.0.113.9'])
+            ->doesntExpectOutputToContain('local copy only')
+            ->assertExitCode(FirewallCommand::EXIT_OK);
+    }
+
+    /**
+     * Answers that need a complete list are refused while the index has a gap (#20).
+     *
+     * `firewall:unblock --all` used to print "already empty" and exit 0 from a
+     * Memcached index that had lost part of itself.
+     */
+    #[Test]
+    public function a_gapped_index_refuses_answers_that_need_the_whole_list(): void
+    {
+        config(['firewall.storage' => ['type' => GappedStorage::class]]);
+
+        $this->artisan('firewall:unblock', ['--all' => true])
+            ->expectsOutputToContain('index may be missing records')
+            ->assertExitCode(FirewallCommand::EXIT_ERROR);
+
+        $this->artisan('firewall:unblock', ['ip' => '203.0.113.0/24'])
+            ->expectsOutputToContain('index may be missing records')
+            ->assertExitCode(FirewallCommand::EXIT_ERROR);
+
+        $this->artisan('firewall:find-reference', ['reference' => 'ABC123'])
+            ->expectsOutputToContain('index may be missing records')
+            ->assertExitCode(FirewallCommand::EXIT_ERROR);
+    }
+
+    /**
+     * An exact address never uses the index, so a gap does not stop it.
+     */
+    #[Test]
+    public function a_gapped_index_still_answers_for_an_exact_address(): void
+    {
+        config(['firewall.storage' => ['type' => GappedStorage::class]]);
+
+        $this->artisan('firewall:unblock', ['ip' => '203.0.113.9'])
+            ->expectsOutputToContain('Nothing in the block list matches')
+            ->assertExitCode(FirewallCommand::EXIT_OK);
     }
 
     #[Test]
@@ -602,6 +703,39 @@ final class BlockManagementTest extends TestCase
     private function useNonQueryableStorage(): void
     {
         config(['firewall.storage' => ['type' => NonQueryableStorage::class]]);
+    }
+
+    /**
+     * A `SharedStorage` over two file stores, optionally with the shared one down.
+     *
+     * "Down" is recorded the way a backend that failed to connect records
+     * itself, which is exactly what `SharedStorage` reads to decide.
+     */
+    private function useSharedFileStorage(bool $sharedDown = false): void
+    {
+        $directory = sys_get_temp_dir() . '/fw-shared-' . bin2hex(random_bytes(6));
+        mkdir($directory);
+        $this->beforeApplicationDestroyed(static function () use ($directory): void {
+            foreach (array_filter((array) glob($directory . '/*'), 'is_string') as $file) {
+                @unlink($file);
+            }
+
+            @rmdir($directory);
+        });
+
+        $shared = $sharedDown ? NonQueryableStorage::class : FileStorage::class;
+
+        if ($sharedDown) {
+            DegradedBackends::record('block list', $shared, 'connection refused');
+        }
+
+        config(['firewall.storage' => [
+            'type' => SharedStorage::class,
+            'config' => [
+                'shared' => ['type' => $shared, 'config' => ['storage_file' => $directory . '/shared.data', 'offense_file' => $directory . '/shared-offenses.data']],
+                'local' => ['type' => FileStorage::class, 'config' => ['storage_file' => $directory . '/local.data', 'offense_file' => $directory . '/local-offenses.data']],
+            ],
+        ]]);
     }
 
     private function manager(): BlockManager

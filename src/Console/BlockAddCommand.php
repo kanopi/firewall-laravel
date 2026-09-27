@@ -84,6 +84,14 @@ final class BlockAddCommand extends Command
         $this->components->twoColumnDetail('Reference', $result['reference']);
         $this->components->twoColumnDetail('Backend', $blocks->backendClass());
 
+        if ($result['local_only']) {
+            $this->components->warn(
+                'The shared block list is unreachable, so this block was written to this server\'s '
+                . 'local copy only. Other servers will not enforce it until it is added again '
+                . 'once the shared store is back.'
+            );
+        }
+
         return FirewallCommand::EXIT_OK;
     }
 

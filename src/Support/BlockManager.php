@@ -12,6 +12,8 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Laravel\Support;
 
 use Kanopi\Firewall\Laravel\Exceptions\IntegrationException;
+use Kanopi\Firewall\Storage\QueryableStorageInterface;
+use Kanopi\Firewall\Storage\SharedStorage;
 use Kanopi\Firewall\Storage\StorageInterface;
 use Kanopi\Firewall\Utility\BlockList;
 use Symfony\Component\HttpFoundation\Request;
@@ -78,7 +80,7 @@ final class BlockManager
      * @param bool $force
      *   Replace an existing block, so a new duration applies.
      *
-     * @return array{address: string, expires: string, reference: string, replaced: bool}
+     * @return array{address: string, expires: string, reference: string, replaced: bool, local_only: bool}
      *
      * @throws IntegrationException
      *   When the address is not a single valid IP, when the backend cannot
@@ -133,6 +135,11 @@ final class BlockManager
             'expires' => $duration > 0 ? date('c', time() + $duration) : 'never',
             'reference' => $reference,
             'replaced' => $existing,
+            // A `SharedStorage` whose shared store is unreachable writes to
+            // this node's local copy only (2.29). The block is real, but only
+            // here, so the caller says so rather than reporting a fleet-wide
+            // block that is not one (#21).
+            'local_only' => $storage instanceof SharedStorage && !$storage->isSharing(),
         ];
     }
 
@@ -148,7 +155,18 @@ final class BlockManager
      */
     public function remove(string $pattern, bool $dryRun = false): int
     {
+        $address = trim($pattern);
+
+        // One exact address is a key lookup, which every backend can do and
+        // which never touches an enumeration index — so it works on a
+        // `SharedStorage` (which cannot enumerate) and on a Memcached store
+        // whose index has a gap, where a range search cannot be trusted.
+        if (filter_var($address, FILTER_VALIDATE_IP) !== false) {
+            return $this->removeAddress($address, $dryRun);
+        }
+
         $this->assertQueryable();
+        $this->assertComplete('lift a range');
 
         if ($dryRun) {
             return count($this->blockList->find($pattern));
@@ -158,20 +176,31 @@ final class BlockManager
     }
 
     /**
-     * Empty the block list.
-     *
-     * Implemented as a lift of everything the list reports rather than
-     * `StorageInterface::reset()`, which also discards offense history — and
-     * that history is what drives escalating bans. An operator clearing blocks
-     * after a false positive wants the slate clean, not the escalation ladder
-     * reset for every address that has ever misbehaved.
-     *
-     * @return int
-     *   How many records went, or would have gone for a dry run.
+     * Lift the block on one exact address.
      */
+    private function removeAddress(string $address, bool $dryRun): int
+    {
+        $storage = $this->blockList->storage();
+
+        if ($storage->isBlocked($address) === false) {
+            return 0;
+        }
+
+        if ($dryRun) {
+            return 1;
+        }
+
+        if ($storage instanceof QueryableStorageInterface) {
+            return $this->blockList->lift([$address]);
+        }
+
+        return $storage->delete($address) ? 1 : 0;
+    }
+
     public function clear(bool $dryRun = false): int
     {
         $this->assertQueryable();
+        $this->assertComplete('empty the block list');
 
         $addresses = array_keys($this->blockList->all());
 
@@ -222,6 +251,11 @@ final class BlockManager
                 return ['address' => (string) $address, 'record' => $record];
             }
         }
+
+        // Not found is only an answer when the list was complete. From an
+        // index with a gap it is "cannot tell", and reporting it as a miss
+        // would send the operator off believing the block had lapsed (#20).
+        $this->assertComplete('say that no block carries this reference');
 
         return null;
     }
@@ -296,9 +330,38 @@ final class BlockManager
 
         throw new IntegrationException(sprintf(
             'The configured storage backend (%s) cannot be queried, so blocks cannot be '
-            . 'listed or lifted from the command line. Use FileStorage, DatabaseStorage or '
-            . 'RedisStorage.',
+            . 'listed, searched or lifted by range from the command line. A single exact '
+            . 'address can still be lifted: firewall:unblock <address>. To query the list, '
+            . 'use FileStorage, DatabaseStorage, RedisStorage or MemcachedStorage.',
             $this->backendClass()
+        ));
+    }
+
+    /**
+     * Refuse an answer that needs a complete list when the backend says it has a gap.
+     *
+     * `MemcachedStorage` (2.33) enumerates from a best-effort index and reports,
+     * through `BlockList::backend()['gap']`, when part of it has been lost. Until
+     * that clears, "the list is empty", "nothing matches this range" and "no
+     * block carries this reference" are exactly the conclusions the library
+     * says must not be drawn — and `firewall:unblock --all` used to print the
+     * first of them and exit 0 (#20).
+     */
+    private function assertComplete(string $action): void
+    {
+        $gap = $this->blockList->backend()['gap'];
+
+        if ($gap === null) {
+            return;
+        }
+
+        throw new IntegrationException(sprintf(
+            'Cannot %s: the %s index may be missing records (%s). A single exact address is '
+            . 'unaffected: firewall:unblock <address>. When lifting by range has to be exact, '
+            . 'use RedisStorage or DatabaseStorage.',
+            $action,
+            $this->backendClass(),
+            $gap
         ));
     }
 

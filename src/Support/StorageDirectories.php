@@ -79,6 +79,29 @@ final class StorageDirectories
                 $this->ensureDirectoryFor($path);
             }
         }
+
+        // `SharedStorage` (2.29) nests two whole storage definitions. The local
+        // one is the copy that keeps the block list alive while the shared
+        // store is unreachable, and a FileStorage there whose directory was
+        // never created cannot write — so the outage it exists for is the one
+        // moment it silently fails (#21).
+        foreach (['shared', 'local'] as $nested) {
+            $definition = $config[$nested] ?? null;
+
+            if (!is_array($definition)) {
+                continue;
+            }
+
+            // Rebuilt with string keys: a hand-edited config can produce a
+            // list here, and `ensureFor()` indexes its input by name.
+            $keyed = [];
+
+            foreach ($definition as $key => $value) {
+                $keyed[(string) $key] = $value;
+            }
+
+            $this->ensureFor($keyed);
+        }
     }
 
     /**
