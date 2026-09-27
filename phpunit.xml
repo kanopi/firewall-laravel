@@ -6,6 +6,7 @@
          failOnWarning="true"
          bootstrap="vendor/autoload.php"
          colors="true"
+         defaultTestSuite="unit,feature"
          cacheDirectory=".phpunit.cache"
          displayDetailsOnTestsThatTriggerWarnings="true"
          displayDetailsOnPhpunitDeprecations="true"
@@ -16,6 +17,12 @@
     </testsuite>
     <testsuite name="feature">
       <directory suffix="Test.php">tests/Feature</directory>
+    </testsuite>
+    <!-- Real Redis and Memcached. Not in the default run: it needs the servers
+         and ext-redis/ext-memcached. Run with `composer test:services`
+         (Docker) or `composer phpunit:services` against servers you have. -->
+    <testsuite name="services">
+      <directory suffix="Test.php">tests/Services</directory>
     </testsuite>
   </testsuites>
   <coverage>
