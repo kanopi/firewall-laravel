@@ -107,6 +107,8 @@ final class ConfigTranslator
      *   channel, which `LoggingFactory::create()` accepts alongside class
      *   names. Injected rather than resolved here so this class stays free of
      *   the service container and remains unit-testable without a Laravel app.
+     *   Definitions holding an object are delivered as overrides, never as
+     *   config input: see `objectHandlerOverrides()`.
      * @param ?string $managedRules
      *   Path to the file `firewall:rule` owns, or NULL when the feature is
      *   switched off. Kept separate from `configs` rather than folded into it,
@@ -199,7 +201,7 @@ final class ConfigTranslator
             $overrides[$policy] = true;
         }
 
-        return $overrides;
+        return $overrides + $this->objectHandlerOverrides();
     }
 
     /**
@@ -312,11 +314,68 @@ final class ConfigTranslator
             unset($inline['global']);
         }
 
-        if ($this->loggerHandlers !== []) {
-            $inline['logger'] = $this->loggerHandlers;
+        $plainHandlers = array_values(array_filter(
+            $this->loggerHandlers,
+            static fn (array $definition): bool => !self::holdsObject($definition)
+        ));
+
+        if ($plainHandlers !== []) {
+            $inline['logger'] = $plainHandlers;
         }
 
         return $inline;
+    }
+
+    /**
+     * Log handler definitions that hold an object, as override paths.
+     *
+     * The handlers borrowed off a Laravel channel are live Monolog instances,
+     * and they cannot be config *input*: the library keys its compiled-config
+     * cache on `serialize($configs)`. Serializing a Monolog handler calls its
+     * `close()` — closing the application's own log handlers on every request,
+     * and discarding a `FingersCrossedHandler`'s buffer — and a handler holding
+     * a closure (a processor pushed from a channel `tap`, say) throws, which
+     * took down every request, fail-open policy or not, because the exception
+     * is not a `FirewallException`. Overrides are applied after the cache and
+     * never serialized, which is the route the library added for exactly this
+     * (kanopi/firewall#259).
+     *
+     * Each gets its own key under `logger` rather than one override for the
+     * whole section, because an override *replaces* its path: `[logger]` would
+     * silently drop every handler a preset or a YAML file declared. The library
+     * iterates the section without reading its keys, so named entries sit
+     * beside the list the files produced.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function objectHandlerOverrides(): array
+    {
+        $overrides = [];
+
+        foreach (array_values(array_filter($this->loggerHandlers, self::holdsObject(...))) as $index => $definition) {
+            $overrides[sprintf('[logger][laravel_%d]', $index)] = $definition;
+        }
+
+        return $overrides;
+    }
+
+    /**
+     * Does a handler definition hold an object anywhere inside it?
+     *
+     * Recursive, because a configured definition can carry an object in its
+     * `args` as easily as a borrowed one carries it in `class`.
+     *
+     * @param array<mixed> $definition
+     */
+    private static function holdsObject(array $definition): bool
+    {
+        foreach ($definition as $value) {
+            if (is_object($value) || (is_array($value) && self::holdsObject($value))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
