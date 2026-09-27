@@ -57,7 +57,12 @@ final class RuleCommand extends FirewallCommand
         $action = is_string($action) ? $action : '';
         $managed = $this->managedPath();
 
-        if ($action !== 'init' && !is_file($managed)) {
+        // Not for `list`, which reads, nor under `--dry-run`, which promises to
+        // write nothing: both used to create the managed file as a side effect
+        // (#12). Neither needs it — a missing file simply holds no rules.
+        $writes = !in_array($action, ['init', 'list'], true) && !(bool) $this->option('dry-run');
+
+        if ($writes && !is_file($managed)) {
             // The script refuses to add a rule to a file that nothing includes
             // — correctly, because a rule written somewhere the firewall never
             // reads is worse than no rule. But the include can only be written
