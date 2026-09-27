@@ -935,6 +935,7 @@ composer check          # PHPCS + PHPStan at max
 composer test:install    # install into a real Laravel app and drive it over HTTP
 composer test:octane     # the same, under a real Octane (RoadRunner) worker
 composer test:matrix     # the suite on every supported PHP and Laravel, in Docker
+composer test:services   # real Redis and Memcached, in Docker
 ```
 
 ### Running a CI job before pushing
@@ -1049,6 +1050,23 @@ The console tests genuinely fork PHP and run the library's own scripts. They are
 the slowest tests here and the only ones that can catch what matters most about
 that layer: that the YAML written out of a PHP config array is something the
 scripts can actually consume.
+
+### The services suite
+
+`tests/Services` runs against real Redis and Memcached servers. The default
+suites use in-memory storage and in-process fakes, which prove this package's
+logic and nothing about a shared store across processes. So this suite covers
+what only real servers can: a block earned by one process and enforced by the
+next, a rate limit counted across requests, the Memcached index behind range
+lifts, and a `SharedStorage` whose Redis goes away.
+
+It is not part of `composer test`. `composer test:services` starts both servers
+in Docker and runs the suite in a container with `ext-redis` and
+`ext-memcached`, the same way the CircleCI `services` job does. To use servers
+you already have, set `REDIS_HOST` and `MEMCACHED_HOST` and run
+`composer phpunit:services`. Tests skip when a server or extension is missing,
+unless `FIREWALL_SERVICES_REQUIRED=1`, which CI sets so that a broken
+environment fails instead of passing on eight skips.
 
 ## License
 

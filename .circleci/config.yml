@@ -199,6 +199,53 @@ jobs:
           command: bash tests/Integration/octane.sh '^13.0'
           no_output_timeout: 15m
 
+  # The services suite, against real Redis and Memcached (#17). Everything
+  # else runs on in-memory storage and in-process fakes, which prove this
+  # package's logic and nothing about a shared store across processes: a block
+  # earned in one process and enforced by the next, a rate limit counted across
+  # requests, a SharedStorage whose shared side goes away. The same arrangement
+  # runs locally with `composer test:services`.
+  #
+  # The servers are secondary containers, reachable on localhost. The
+  # extensions and server images are pinned to the versions
+  # tests/Integration/Dockerfile.services and services.sh use; bump them
+  # together.
+  services:
+    docker:
+      - image: cimg/php:8.3
+      - image: redis:7.4
+      - image: memcached:1.6.41
+    resource_class: small
+    environment:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: "6379"
+      MEMCACHED_HOST: 127.0.0.1
+      MEMCACHED_PORT: "11211"
+      # Missing servers or extensions fail rather than skip: a suite that skipped
+      # all eight tests would otherwise report green having tested nothing.
+      FIREWALL_SERVICES_REQUIRED: "1"
+    steps:
+      - checkout
+      - run:
+          name: Install ext-redis and ext-memcached
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y libmemcached-dev zlib1g-dev
+            sudo pecl update-channels
+            printf "no\nno\n" | sudo pecl install redis-6.2.0
+            # Every configure prompt at its default. A fixed number of answers
+            # rather than `yes`, which is killed by SIGPIPE when pecl exits and
+            # fails the step under pipefail (exit 141) — the library's CI
+            # learned that one.
+            printf '\n\n\n\n\n\n\n\n\n\n\n\n' | sudo pecl install memcached-3.4.0
+            php -m | grep -E '^(redis|memcached)$'
+      - run:
+          name: Install Dependencies
+          command: composer update --no-interaction --prefer-dist
+      - run:
+          name: Services suite
+          command: composer phpunit:services
+
   install:
     parameters:
       php:
@@ -253,6 +300,7 @@ workflows:
       # thoroughly.
       - phpunit-lowest
       - octane
+      - services
       - install:
           name: install-php8.2-laravel12
           php: '8.2'
