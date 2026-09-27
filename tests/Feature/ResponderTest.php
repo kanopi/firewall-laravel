@@ -194,19 +194,24 @@ final class ResponderTest extends TestCase
     }
 
     /**
-     * The cookie lifetime comes from the TTL the interstitial posted back.
+     * The cookie lifetime comes from the token's signed expiry.
      *
-     * It has to match the token's own expiry, which `evaluate()` set from the
-     * same field. A cookie that outlived the token would leave a visitor
-     * holding a pass that is silently refused; one that expired first would
-     * re-challenge somebody whose token was still good.
+     * It has to match the token's own expiry: a cookie that outlived it would
+     * leave a visitor holding a pass that is silently refused, and one that
+     * expired first would re-challenge somebody whose token was still good.
+     *
+     * The posted `ttl` here is hostile on purpose. It is the visitor's own
+     * proposal, which the library stopped believing in 2.32, and it must not
+     * decide the cookie either.
      */
     #[Test]
-    public function the_pass_cookie_expiry_follows_the_posted_ttl(): void
+    public function the_pass_cookie_expiry_follows_the_tokens_signed_expiry(): void
     {
+        $this->configureChallenge();
+
         $response = $this->responder()->solved(
-            Request::create('/_firewall/challenge', 'POST', ['ttl' => '600']),
-            new ChallengeSolvedException('the-token', '/gated')
+            Request::create('/_firewall/challenge', 'POST', ['ttl' => '999999999']),
+            new ChallengeSolvedException($this->passToken(600), '/gated')
         );
 
         $expires = $response->headers->getCookies()[0]->getExpiresTime();
@@ -216,21 +221,24 @@ final class ResponderTest extends TestCase
     }
 
     /**
-     * A TTL that is absent, empty, non-numeric or an array falls back to an hour.
+     * A token whose claims cannot be read falls back to an hour.
      *
-     * Every one of these is attacker-chosen: they arrive on the interstitial's
-     * own POST. The array case is the one that matters most — reading it
-     * through `$request->input()` would throw out of `InputBag::get()`.
+     * Only reachable when the configuration changed under a running worker,
+     * since `evaluate()` minted the token with the configured secret moments
+     * earlier. An hour is the library's default `challenge.ttl` and its
+     * ceiling on any pass, so the cookie cannot outlive a token by more.
      *
-     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $challenge
      */
     #[Test]
-    #[DataProvider('unusableTtls')]
-    public function an_unusable_posted_ttl_falls_back_to_an_hour(array $payload): void
+    #[DataProvider('unreadableTokens')]
+    public function an_unreadable_token_falls_back_to_an_hour(array $challenge, bool $signed): void
     {
+        config($challenge);
+
         $response = $this->responder()->solved(
-            Request::create('/_firewall/challenge', 'POST', $payload),
-            new ChallengeSolvedException('the-token', '/gated')
+            Request::create('/_firewall/challenge', 'POST', ['ttl' => '999999999']),
+            new ChallengeSolvedException($signed ? $this->passToken(600) : 'not-a-token', '/gated')
         );
 
         $expires = $response->headers->getCookies()[0]->getExpiresTime();
@@ -240,17 +248,14 @@ final class ResponderTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0: array<string, mixed>}>
+     * @return array<string, array{0: array<string, mixed>, 1: bool}>
      */
-    public static function unusableTtls(): array
+    public static function unreadableTokens(): array
     {
         return [
-            'absent' => [[]],
-            'empty' => [['ttl' => '']],
-            'words' => [['ttl' => 'an hour']],
-            'zero' => [['ttl' => '0']],
-            'negative' => [['ttl' => '-60']],
-            'array' => [['ttl' => ['3600']]],
+            'not a token' => [['firewall.challenge.secret' => 'long-enough-secret-for-hmac-signing-here'], false],
+            'signed with another secret' => [['firewall.challenge.secret' => 'a-different-secret-rotated-under-the-worker'], true],
+            'no secret configured' => [['firewall.challenge.secret' => ''], true],
         ];
     }
 
@@ -328,6 +333,15 @@ final class ResponderTest extends TestCase
                 'provider_token' => 'math.signed-by-the-firewall',
             ]
         );
+    }
+
+    /**
+     * A pass token minted the way `evaluate()` mints one.
+     */
+    private function passToken(int $ttl): string
+    {
+        return (new TokenManager('long-enough-secret-for-hmac-signing-here', 'math', 'math'))
+            ->mint(Request::create('/gated'), $ttl, 'math');
     }
 
     private function configureChallenge(): void

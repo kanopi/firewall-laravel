@@ -13,7 +13,6 @@ namespace Kanopi\Firewall\Laravel\Http;
 
 use Illuminate\Contracts\View\Factory as ViewFactory;
 use Illuminate\Http\Request;
-use Kanopi\Firewall\Challenge\ChallengeProviderInterface;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
@@ -21,6 +20,7 @@ use Kanopi\Firewall\Exception\FirewallException;
 use Kanopi\Firewall\Exception\FirewallLockdownException;
 use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Laravel\Support\Settings;
+use Kanopi\Firewall\Utility\ChallengePasses;
 use Symfony\Component\HttpFoundation\Cookie;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -35,19 +35,27 @@ use Symfony\Component\HttpFoundation\Response;
 final class FirewallResponder
 {
     /**
-     * Cookie lifetime used when the submission carried no usable TTL.
+     * Cookie lifetime used when the token's own expiry cannot be read.
      *
-     * The same fallback the library applies, and it has to be the same: the
-     * token's own expiry is set from the posted TTL inside `evaluate()`, so a
-     * cookie that outlived the token would leave a visitor holding a pass that
-     * is silently refused, and one that expired first would re-challenge
-     * somebody whose token was still good.
+     * The library's default `challenge.ttl`, which since 2.30 is also the
+     * ceiling on any pass. Reaching it means the token did not verify against
+     * the configured secret — which `evaluate()` minted it with moments ago,
+     * so only a configuration changed under a running worker gets here.
      */
     private const DEFAULT_TTL = 3600;
 
+    /**
+     * @param \Closure(): ChallengePasses $passes
+     *   Resolves the library's pass reader against the current configuration.
+     *   A closure rather than an instance because this responder is a
+     *   singleton and the configuration it reads is not: resolving per solve
+     *   keeps it reading the same config the firewall that minted the token
+     *   did.
+     */
     public function __construct(
         private readonly Settings $settings,
-        private readonly ViewFactory $views
+        private readonly ViewFactory $views,
+        private readonly \Closure $passes
     ) {
     }
 
@@ -193,7 +201,7 @@ final class FirewallResponder
      */
     public function solved(Request $request, ChallengeSolvedException $exception): Response
     {
-        $ttl = $this->postedTtl($request);
+        $ttl = $this->passLifetime($exception->getToken());
 
         if ($this->wantsJson($request)) {
             $response = new \Illuminate\Http\JsonResponse([
@@ -269,23 +277,38 @@ final class FirewallResponder
     }
 
     /**
-     * The TTL the interstitial posted back, clamped the way the library clamps it.
+     * Seconds until the pass token expires, read from its signed `exp` claim.
      *
-     * Read off the raw parameter bag rather than through `$request->input()`,
-     * because `InputBag::get()` throws when the value is an array and this
-     * field is attacker-chosen — it arrives on the interstitial's own POST.
+     * The cookie has to expire with the token. One that outlived it would
+     * leave a visitor holding a pass that is silently refused; one that
+     * expired first would re-challenge somebody whose token was still good.
+     *
+     * ## Why not the posted `ttl`
+     *
+     * This used to read the `ttl` field the interstitial posts back, which is
+     * the value the visitor's own browser proposes. Since 2.32 the library
+     * decides the lifetime from a signed value carried in the interstitial and
+     * ignores the posted one (2.30 clamped it first), but in `exception` mode
+     * `ChallengeSolvedException` carries only the token — so the posted field
+     * was still deciding the cookie's lifetime here, up to whatever a visitor
+     * cared to type. The token's own claim is the value the firewall actually
+     * enforces, and reading it needs nothing the visitor controls.
      */
-    private function postedTtl(Request $request): int
+    private function passLifetime(string $token): int
     {
-        $raw = $request->request->all()[ChallengeProviderInterface::TTL_FIELD] ?? null;
-
-        if (!is_string($raw) || $raw === '') {
+        try {
+            $expires = (($this->passes)())->inspect($token)['exp'] ?? null;
+        } catch (FirewallException) {
+            // No `challenge.secret` in the configuration. The token could not
+            // have been minted without one, so this is a config changed under
+            // a running worker; the default is the library's own ceiling.
             return self::DEFAULT_TTL;
         }
 
-        $ttl = max(0, (int) $raw);
-
-        return $ttl > 0 ? $ttl : self::DEFAULT_TTL;
+        // `max(1, …)` matches what the library does in `block` mode: a token
+        // minted in the second before this ran is still a pass, and a zero
+        // lifetime would make the cookie a deletion instead.
+        return is_int($expires) ? max(1, $expires - time()) : self::DEFAULT_TTL;
     }
 
     /**

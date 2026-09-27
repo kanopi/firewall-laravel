@@ -44,6 +44,7 @@ use Kanopi\Firewall\Laravel\Http\Middleware\EvaluateFirewall;
 use Kanopi\Firewall\Laravel\Support\BlockManager;
 use Kanopi\Firewall\Laravel\Support\Settings;
 use Kanopi\Firewall\Utility\BlockList;
+use Kanopi\Firewall\Utility\ChallengePasses;
 
 /**
  * Register the firewall with Laravel.
@@ -105,9 +106,18 @@ final class FirewallServiceProvider extends ServiceProvider
             $this->app->runningInConsole()
         ));
 
+        // The library's reader for pass tokens, on the same config inputs as
+        // `BlockList` above. The responder reads a solved token's signed
+        // expiry through it rather than trusting the lifetime the visitor
+        // posted.
+        $this->app->bind(ChallengePasses::class, fn (): ChallengePasses => new ChallengePasses(
+            $this->factory()->translator()->configs()
+        ));
+
         $this->app->singleton(FirewallResponder::class, fn (): FirewallResponder => new FirewallResponder(
             Settings::for($this->app),
-            $this->viewFactory()
+            $this->viewFactory(),
+            fn (): ChallengePasses => $this->app->make(ChallengePasses::class)
         ));
     }
 
