@@ -239,6 +239,34 @@ final class ChallengeTest extends TestCase
     }
 
     /**
+     * Per-route registration inside the `web` group honours the pass (#5).
+     *
+     * The firewall runs after `EncryptCookies` there, which used to fail to
+     * decrypt the raw pass token and replace it with NULL — so a visitor who
+     * solved the challenge was challenged again on every request.
+     */
+    #[Test]
+    #[DefineEnvironment('withoutGlobalMiddleware')]
+    public function a_pass_survives_encrypt_cookies_in_the_web_group(): void
+    {
+        \Illuminate\Support\Facades\Route::middleware(['web', \Kanopi\Firewall\Laravel\Http\Middleware\EvaluateFirewall::class])
+            ->get('/gated-web', static fn (): string => 'through the web group');
+
+        config(['firewall.plugins.0.config' => ['path:/gated-web']]);
+
+        $interstitial = $this->get('/gated-web');
+        $this->assertStringContainsString(MathChallengeProvider::STATE_FIELD, (string) $interstitial->getContent());
+
+        $cookie = $this->passCookie($this->postSolution($interstitial, $this->answerFrom($interstitial)));
+        $this->assertNotNull($cookie);
+
+        $this->withUnencryptedCookie((string) $cookie->getName(), (string) $cookie->getValue())
+            ->get('/gated-web')
+            ->assertOk()
+            ->assertSee('through the web group');
+    }
+
+    /**
      * The registered route is unreachable while challenges are configured…
      * and a plain 404 once they are not, rather than a 500 or a blank 200.
      */

@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Laravel;
 
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
 use Illuminate\Routing\Router;
@@ -202,6 +203,31 @@ final class FirewallServiceProvider extends ServiceProvider
         $this->registerMiddleware();
         $this->registerChallengeRoute();
         $this->registerRenderables();
+        $this->excludePassCookieFromEncryption();
+    }
+
+    /**
+     * Keep `EncryptCookies` away from the challenge pass cookie.
+     *
+     * The pass token is set raw, because the firewall verifies its HMAC itself
+     * and an encrypted value would never verify. Registered globally the
+     * firewall runs before `EncryptCookies` and reads it untouched — but added
+     * to the `web` group, it runs after, and `EncryptCookies` fails to decrypt
+     * the raw token and replaces it with NULL. The visitor solved the
+     * challenge, holds a valid pass, and is challenged again on every request
+     * (#5). The same middleware would also encrypt the cookie on its way out
+     * of any response it wraps.
+     *
+     * The token is already an HMAC-signed value the firewall checks, so
+     * Laravel's encryption adds nothing to it.
+     */
+    private function excludePassCookieFromEncryption(): void
+    {
+        $cookieName = Settings::for($this->app)->text('firewall.challenge.cookie_name');
+
+        if ($cookieName !== '') {
+            EncryptCookies::except($cookieName);
+        }
     }
 
     /**

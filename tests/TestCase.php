@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Laravel\Tests;
 
+use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Http\Middleware\TrustProxies;
 use Kanopi\Firewall\Laravel\FirewallServiceProvider;
 use Kanopi\Firewall\Storage\InMemoryStorage;
@@ -48,6 +49,11 @@ abstract class TestCase extends Orchestra
     protected function tearDown(): void
     {
         $this->resetStaticState();
+
+        // Only on the way out: the provider registers the pass cookie's
+        // exclusion while the app boots, which is before setUp() resets
+        // anything, so flushing it there would undo the thing under test.
+        EncryptCookies::flushState();
 
         parent::tearDown();
     }
