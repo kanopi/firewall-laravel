@@ -5,36 +5,101 @@ All notable changes to `kanopi/firewall-laravel` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.1.0) — 2026-09-27
+
+Support for kanopi/firewall 2.33, and the fixes from a pre-release review.
+One of those fixes is urgent for anyone on 1.0.0: a common Laravel logging
+setup made every request return a 500.
+
+### Upgrading
+
+Nothing to change in your configuration. Three behaviours change with this
+release. Check them against your deploy and monitoring:
+
+- **`global.require_config: true` now fails the boot on a missing `configs`
+  file.** Before, the file was dropped silently and the firewall ran without
+  those rules. If a path listed under `configs` doesn't exist, the firewall now
+  refuses to start (handled by `on_boot_failure`).
+- **`firewall:health --json`: `healthy` is false whenever `errors` is not
+  empty**, including a panic file that failed to apply.
+- **`firewall:check` exits 70 when the wrapper itself fails** (the script is
+  missing, or the configuration cannot be written out), not 1 or 2, which are
+  its "blocked" and "challenged" verdicts. The other wrapped commands exit 2 in
+  that case, and report an unwritable `temp_path` as an error instead of
+  throwing.
+
+Upgrading the library also brings its own behaviour changes, worth reading
+before deploying:
+- block records no longer keep cookies, most headers or the request body (2.31)
+- a challenge pass lasts at most `challenge.ttl`, an hour by default (2.30)
+- a rule source larger than 32 MiB fails instead of loading (2.30)
+- a request with no client address is no longer added to the block list (2.33)
 
 ### Changed
 
 - **Requires `kanopi/firewall` ^2.33** (was ^2.26). No library API this package
-  calls was removed or changed. Upgrading brings the library's own behaviour
-  changes with it, worth reading before deploying: block records no longer keep
-  cookies, most headers or the request body (2.31); a challenge pass lasts at
-  most `challenge.ttl`, an hour by default (2.30); a rule source larger than
-  32 MiB fails instead of loading (2.30); and a request with no client address
-  is no longer added to the block list (2.33).
+  calls was removed or changed.
 
 ### Fixed
 
-- **The pass cookie's lifetime came from the visitor.** `FirewallResponder`
-  set the cookie's expiry from the `ttl` field the interstitial posts back —
-  the value the library clamped in 2.30 and stopped believing in 2.32. It now
-  reads the solved token's signed `exp` claim through the library's
-  `ChallengePasses`, so the cookie expires with the token.
-- **`tarpit`, `events`, `metrics` and `connections` set in
-  `config/firewall.php` were dropped silently.** They are library sections
-  added in 2.30 and 2.33, and are now passed through as written.
+- **Borrowed log handlers took down every request (#4).** The handlers this
+  package borrows from your Laravel log channel went into the library's config
+  input, which the library serializes to key its cache. A handler holding a
+  closure (for example a processor pushed from a channel `tap`) threw on every
+  request, even with `on_boot_failure=allow`, and serializing the rest closed
+  the application's own handlers, discarding a `FingersCrossedHandler`'s
+  buffer. They are now delivered as overrides, which are never serialized.
+- **`require_config` could not catch a missing `configs` file (#19).** See
+  Upgrading.
+- **Solved challenges looped with the middleware in the `web` group (#5).**
+  `EncryptCookies` discarded the raw pass cookie. The cookie is now excluded
+  from encryption.
+- **A missing challenge view served a blank page (#6).** Visitors had nothing
+  to solve. The interstitial is now served on its own.
+- **`response: redirect` raised from your own code was a 500 (#7).** It now
+  renders as a redirect.
+- **`--json` output could not be parsed (#8).** `firewall:doctor --json`
+  printed two documents, and wrapped scripts' warnings went to stdout. It is now
+  one document (`integration` and `library`), and stderr goes to stderr.
+- **Wrapper failures looked like `firewall:check` verdicts (#11).** See
+  Upgrading.
+- **`firewall:block --duration=-60` created a permanent block (#9).** Negative
+  durations are refused.
+- **`firewall:health` reported `healthy: true` beside errors (#10).** See
+  Upgrading.
+- **Block commands drew conclusions from an incomplete Memcached index (#20).**
+  `unblock --all`, range lifts and a `find-reference` miss are refused while
+  the index reports a gap. A single exact address is lifted by key on any
+  backend, including `SharedStorage`, which used to be refused.
+- **`SharedStorage` (#21):** the local fallback store's directory is now
+  created, and `firewall:block` warns when only the local copy was written.
+- **`firewall:rule list` and `--dry-run` created the managed rules file
+  (#12).**
+- **The banning message was HTML-escaped twice (#14).** JSON clients were also
+  given the wrong challenge URL on sites served from a subdirectory.
+- **The pass cookie's lifetime came from the visitor.** It is now read from the
+  solved token's signed expiry.
+- **`tarpit`, `events`, `metrics` and `connections` in `config/firewall.php`
+  were dropped silently.** They are now passed through.
 
 ### Added
 
-- **`firewall:doctor` understands `global.trusted_proxies`** (2.33). Declared
-  only there, the posture is reported as resolved for the firewall, with a note
-  that the rest of the application still sees the proxy. Declared there and in
-  Laravel, it warns: once `TrustProxies` has run, the library ignores its own
-  list.
+- **`firewall:challenge` (#16)** inspects a challenge pass, or revokes one
+  without rotating the secret for everybody (wraps `bin/firewall-challenge`).
+- **`firewall:health` reports `sleeping_rules` and `locked_down` (#13).**
+  Lockdown is a warning. A rule outside its schedule is listed but is not a
+  warning.
+- **`firewall:doctor` understands `global.trusted_proxies`** (2.33), and warns
+  when both Laravel and the firewall declare proxies.
+
+### Tests
+
+- A real-shaped Laravel log channel, `DatabaseStorage` on SQLite,
+  `SharedStorage`, a Memcached-style index gap, per-route registration in the
+  `web` group, and parsed `--json` output.
+- The install test now runs `php artisan optimize` and repeats its HTTP checks
+  against cached config and routes.
+- CI gains a lowest-dependencies job.
 
 ## [1.0.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.0.0) — 2026-09-12
 
