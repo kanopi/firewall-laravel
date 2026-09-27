@@ -156,6 +156,33 @@ jobs:
       - store_artifacts:
           path: reports
 
+  # The lowest versions the published constraints allow, on the lowest PHP.
+  # `composer.lock` is not committed, so every other job resolves the newest
+  # releases — good at catching an upstream break the day it ships, and blind to
+  # a constraint floor this package no longer works with (#17). No coverage
+  # gate: that belongs to the matrix above, and a floor job exists to answer one
+  # question, which is whether the suite passes at all.
+  #
+  # Composer's audit still applies, so "lowest" means lowest without a known
+  # advisory — which for laravel/framework is well above 12.0.0. That is the
+  # same fact the Supported versions section of the README records.
+  phpunit-lowest:
+    docker:
+      - image: cimg/php:8.2
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Install Lowest Dependencies
+          command: |
+            composer update --no-interaction --prefer-dist --prefer-lowest --prefer-stable
+            for package in laravel/framework orchestra/testbench kanopi/firewall symfony/http-foundation; do
+              composer show "${package}" | grep -E '^(name|versions)'
+            done
+      - run:
+          name: PHPUnit
+          command: composer test
+
   install:
     parameters:
       php:
@@ -208,6 +235,7 @@ workflows:
       # the SAPI, real storage — varies with the framework version and barely
       # with the PHP one, which the phpunit matrix above already covers
       # thoroughly.
+      - phpunit-lowest
       - install:
           name: install-php8.2-laravel12
           php: '8.2'
