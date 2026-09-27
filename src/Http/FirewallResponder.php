@@ -25,7 +25,10 @@ use Symfony\Component\HttpFoundation\Cookie;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Turn the firewall's three request-time exceptions into Laravel responses.
+ * Turn the firewall's request-time exceptions into Laravel responses.
+ *
+ * Block (and lockdown, which extends it), redirect, challenge required and
+ * challenge solved.
  *
  * These exist only in `exception` mode, which is the mode this integration
  * always runs the library in when enforcement is wanted. In its default `block`

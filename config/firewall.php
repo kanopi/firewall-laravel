@@ -215,9 +215,12 @@ return [
     | Plugins
     |--------------------------------------------------------------------------
     |
-    | The rules. Each entry names a plugin class, a response (allow, block or
-    | challenge), a weight (lower runs first) and its own `config` list. Allow
-    | rules are consulted first, then challenge, then block.
+    | The rules. Each entry names a plugin class, a response, a weight (lower
+    | runs first within its response) and its own `config` list. The responses
+    | are allow, block and challenge, plus redirect, record and mark (2.26) and
+    | tarpit (2.30). Allow rules are consulted first and a match ends
+    | evaluation; the full order is at
+    | https://github.com/kanopi/firewall/blob/2.x/docs/reference/evaluation-order.md.
     |
     | Empty by default, and that is the safe default rather than a lazy one: a
     | shipped rule set that blocks something a host application depends on is
