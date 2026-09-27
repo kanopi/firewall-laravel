@@ -88,6 +88,33 @@ final class FirewallFactoryTest extends TestCase
     }
 
     /**
+     * A missing rules file stops the firewall starting under `require_config` (#19).
+     *
+     * It used to be dropped before the library saw it, so a deploy that
+     * failed to ship its rules booted with none and served everything.
+     */
+    #[Test]
+    public function require_config_refuses_to_boot_on_a_missing_rules_file(): void
+    {
+        config([
+            'firewall.configs' => ['/no/such/rules.yml'],
+            'firewall.global.require_config' => true,
+        ]);
+
+        $this->expectException(\Kanopi\Firewall\Exception\ConfigurationException::class);
+
+        $this->factory()->make();
+    }
+
+    #[Test]
+    public function without_require_config_a_missing_rules_file_is_left_to_the_doctor(): void
+    {
+        config(['firewall.configs' => ['/no/such/rules.yml']]);
+
+        $this->assertInstanceOf(\Kanopi\Firewall\Firewall::class, $this->factory()->make());
+    }
+
+    /**
      * A panic file asking for `block` is refused, and says what to write instead.
      *
      * The panic switch is applied after the mode override, so the configured
