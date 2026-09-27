@@ -739,7 +739,13 @@ evaluates it. If you have measured that you still need more:
 'octane' => ['persist_instance' => true],
 ```
 
-That binds a true singleton: config parsed and plugins built once per worker.
+That binds a true singleton, built when the Octane worker starts, so the config
+is parsed and plugins built once per worker. It has to be built then: Octane
+serves each request from a clone of the worker's application, and a singleton
+first resolved during a request is thrown away with the clone. Before 1.2.0 it
+was, so this option rebuilt the firewall per request like the default. If the
+firewall cannot be built at worker start, that is logged and it is built per
+request instead, under the usual `on_boot_failure` policy.
 Take it only with `panic_file` unset, and `firewall:doctor` reports the
 combination of the two as an **error** rather than leaving you to find out
 during an incident.
@@ -761,6 +767,12 @@ Two more things about Octane specifically:
   fixed pool. The library caps concurrent holds per host (`tarpit.max_concurrent`)
   and serves the request normally once the cap is full, but set the cap well
   below your worker count, or leave the tarpitting to a CDN or `nginx`.
+
+All of this is checked under a real RoadRunner worker by `composer test:octane`
+(and the CircleCI `octane` job): enforcement despite the `cli` SAPI, a block
+lifted from the CLI applying on the next request, a panic file honoured on the
+next request with no reload, and, as a control, a `persist_instance` worker
+ignoring that same panic file.
 
 ## Fail open or fail closed
 
@@ -921,6 +933,7 @@ composer test           # both suites, no coverage — the fast loop
 composer test:gate      # both suites with coverage, the figure CI reads
 composer check          # PHPCS + PHPStan at max
 composer test:install    # install into a real Laravel app and drive it over HTTP
+composer test:octane     # the same, under a real Octane (RoadRunner) worker
 composer test:matrix     # the suite on every supported PHP and Laravel, in Docker
 ```
 

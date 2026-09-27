@@ -183,6 +183,22 @@ jobs:
           name: PHPUnit
           command: composer test
 
+  # The firewall under a real Octane worker (RoadRunner), checking what the
+  # README's Octane section claims (#17): enforcement despite RoadRunner's `cli`
+  # SAPI, a panic file honoured on the next request with no reload, and the
+  # control, that `persist_instance` really does keep one instance per worker
+  # (#38). Same script as `composer test:octane`.
+  octane:
+    docker:
+      - image: cimg/php:8.3
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Run under Octane (RoadRunner)
+          command: bash tests/Integration/octane.sh '^13.0'
+          no_output_timeout: 15m
+
   install:
     parameters:
       php:
@@ -236,6 +252,7 @@ workflows:
       # with the PHP one, which the phpunit matrix above already covers
       # thoroughly.
       - phpunit-lowest
+      - octane
       - install:
           name: install-php8.2-laravel12
           php: '8.2'

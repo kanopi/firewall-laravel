@@ -167,6 +167,55 @@ final class ServiceProviderTest extends TestCase
         $this->assertSame($this->app->make(Firewall::class), $this->app->make(Firewall::class));
     }
 
+    /**
+     * A persistent firewall is built when the Octane worker starts (#38).
+     *
+     * Octane serves each request from a clone of the worker's application, so
+     * a singleton first resolved during a request is discarded with the clone.
+     * Resolving it on `WorkerStarting` — dispatched on the worker's own
+     * application — is what makes it outlive the request. The event is named
+     * by string so this runs without Octane installed.
+     */
+    #[Test]
+    #[DefineEnvironment('persistInstance')]
+    public function persist_instance_builds_the_firewall_when_an_octane_worker_starts(): void
+    {
+        $this->assertFalse($this->app->resolved(Firewall::class));
+
+        $this->app['events']->dispatch('Laravel\\Octane\\Events\\WorkerStarting');
+
+        $this->assertTrue($this->app->resolved(Firewall::class));
+    }
+
+    #[Test]
+    public function the_scoped_firewall_is_not_built_when_an_octane_worker_starts(): void
+    {
+        $this->app['events']->dispatch('Laravel\\Octane\\Events\\WorkerStarting');
+
+        $this->assertFalse($this->app->resolved(Firewall::class));
+    }
+
+    /**
+     * A firewall that cannot be built must not stop the worker booting.
+     *
+     * It is logged and left for the next request to build, where
+     * `on_boot_failure` applies as it would without the option.
+     */
+    #[Test]
+    #[DefineEnvironment('persistInstance')]
+    public function a_firewall_that_cannot_be_built_at_worker_start_is_logged_not_thrown(): void
+    {
+        config(['firewall.configs' => ['/no/such/rules.yml'], 'firewall.global.require_config' => true]);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('warning')
+            ->once()
+            ->withArgs(static fn (string $message): bool => str_contains($message, 'Octane worker started'));
+
+        $this->app['events']->dispatch('Laravel\\Octane\\Events\\WorkerStarting');
+
+        $this->assertFalse($this->app->resolved(Firewall::class));
+    }
+
     #[Test]
     public function it_appends_the_middleware_after_trust_proxies(): void
     {
