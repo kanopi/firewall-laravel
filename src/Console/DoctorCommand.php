@@ -51,44 +51,62 @@ final class DoctorCommand extends FirewallCommand
     public function handle(): int
     {
         $findings = $this->laravel->make(IntegrationDoctor::class)->run();
-
-        $json = (bool) $this->option('json');
-
-        if ($json) {
-            $this->line((string) json_encode(
-                ['integration' => array_map(
-                    static fn (Diagnosis $diagnosis): array => $diagnosis->toArray(),
-                    $findings
-                )],
-                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
-            ));
-        } else {
-            $this->renderFindings($findings);
-        }
-
-        $integrationFailed = $this->hasError($findings);
-
-        if ((bool) $this->option('integration-only')) {
-            return $integrationFailed ? self::EXIT_ERROR : self::EXIT_OK;
-        }
-
-        if (!$json) {
-            $this->newLine();
-            $this->components->info('Library checks (bin/firewall-doctor)');
-        }
-
-        // array_merge, not `+`: both halves are integer-keyed lists, and `+`
-        // would keep only the first array's element at each index — silently
-        // dropping --quiet whenever --json was also given.
-        $libraryExit = $this->runFirewallBinary('firewall-doctor', array_merge(
+        $integrationExit = $this->hasError($findings) ? self::EXIT_ERROR : self::EXIT_OK;
+        $libraryArguments = array_merge(
             $this->forwardOptions(flags: ['json']),
             (bool) $this->option('quiet-checks') ? ['--quiet'] : []
-        ));
+        );
 
-        // The worse of the two. A green library report does not redeem a
-        // middleware that runs before TrustProxies, and this command is meant
-        // to be usable as a deploy gate — so it must fail if either half does.
-        return max($libraryExit, $integrationFailed ? self::EXIT_ERROR : self::EXIT_OK);
+        if ((bool) $this->option('json')) {
+            return $this->reportJson($findings, $integrationExit, $libraryArguments);
+        }
+
+        $this->renderFindings($findings);
+
+        if ((bool) $this->option('integration-only')) {
+            return $integrationExit;
+        }
+
+        $this->newLine();
+        $this->components->info('Library checks (bin/firewall-doctor)');
+
+        $libraryExit = $this->runFirewallBinary('firewall-doctor', $libraryArguments);
+
+        return max($libraryExit, $integrationExit);
+    }
+
+    /**
+     * Print both halves of the diagnosis as one JSON document.
+     *
+     * The library script's JSON is captured and nested under `library` rather
+     * than streamed after this command's own: two documents back to back are
+     * not JSON, and `firewall:doctor --json | jq` failed on exactly that (#8).
+     * Output the script produced that is not JSON — a fatal error, say — is
+     * kept as a string rather than dropped, so the document still says what
+     * happened.
+     *
+     * @param array<int, Diagnosis> $findings
+     * @param array<int, string> $libraryArguments
+     */
+    private function reportJson(array $findings, int $integrationExit, array $libraryArguments): int
+    {
+        $document = ['integration' => array_map(
+            static fn (Diagnosis $diagnosis): array => $diagnosis->toArray(),
+            $findings
+        )];
+        $exitCode = $integrationExit;
+
+        if (!(bool) $this->option('integration-only')) {
+            [$libraryExit, $libraryOutput] = $this->captureFirewallBinary('firewall-doctor', $libraryArguments);
+            $decoded = json_decode($libraryOutput, true);
+
+            $document['library'] = is_array($decoded) ? $decoded : ['unparsed_output' => $libraryOutput];
+            $exitCode = max($libraryExit, $integrationExit);
+        }
+
+        $this->line((string) json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        return $exitCode;
     }
 
     /**

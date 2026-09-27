@@ -11,7 +11,10 @@ declare(strict_types=1);
 
 namespace Kanopi\Firewall\Laravel\Tests\Feature;
 
+use Illuminate\Support\Facades\Artisan;
+use Kanopi\Firewall\Laravel\Console\CheckCommand;
 use Kanopi\Firewall\Laravel\Console\FirewallCommand;
+use Kanopi\Firewall\Laravel\Tests\Fixtures\SplitConsoleOutput;
 use Kanopi\Firewall\Laravel\Tests\TestCase;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -565,10 +568,63 @@ final class ConsoleTest extends TestCase
     {
         config(['firewall.artisan.temp_path' => '/no/such/directory']);
 
-        $this->expectException(\Kanopi\Firewall\Laravel\Exceptions\IntegrationException::class);
-        $this->expectExceptionMessageMatches('/Unable to write the effective firewall configuration/');
+        $this->artisan('firewall:doctor', ['--quiet-checks' => true])
+            ->expectsOutputToContain('Unable to write the effective firewall configuration')
+            ->assertExitCode(FirewallCommand::EXIT_CONFIG_UNREADABLE);
+    }
 
-        $this->artisan('firewall:check', ['--lint' => true])->run();
+    /**
+     * A wrapper failure in `firewall:check` is never mistaken for a verdict (#11).
+     *
+     * 1 and 2 mean "blocked" and "challenged" there, so a CI gate asserting
+     * that an attack is blocked would pass on a check that never ran.
+     */
+    #[Test]
+    public function check_reports_wrapper_failures_as_internal_errors(): void
+    {
+        config(['firewall.artisan.temp_path' => '/no/such/directory']);
+
+        $this->artisan('firewall:check', ['--lint' => true])
+            ->expectsOutputToContain('Unable to write the effective firewall configuration')
+            ->assertExitCode(CheckCommand::EXIT_INTERNAL);
+
+        config(['firewall.artisan.temp_path' => null, 'firewall.artisan.bin_path' => '/no/such/bin']);
+
+        $this->artisan('firewall:check', ['--lint' => true])
+            ->expectsOutputToContain('was not found at')
+            ->assertExitCode(CheckCommand::EXIT_INTERNAL);
+    }
+
+    /**
+     * `firewall:doctor --json` is one JSON document holding both halves (#8).
+     */
+    #[Test]
+    public function doctor_json_is_a_single_document(): void
+    {
+        $output = new SplitConsoleOutput();
+
+        Artisan::call('firewall:doctor', ['--json' => true], $output);
+
+        $document = json_decode($output->stdout(), true);
+
+        $this->assertIsArray($document, 'stdout was not one JSON document: ' . $output->stdout());
+        $this->assertArrayHasKey('integration', $document);
+        $this->assertArrayHasKey('library', $document);
+        $this->assertArrayNotHasKey('unparsed_output', $document['library']);
+    }
+
+    /**
+     * A script's stderr goes to stderr, so its `--json` stdout stays parseable (#8).
+     */
+    #[Test]
+    public function script_warnings_do_not_land_in_json_stdout(): void
+    {
+        $output = new SplitConsoleOutput();
+
+        Artisan::call('firewall:check', ['--ip' => '203.0.113.5', '--live-storage' => true, '--json' => true], $output);
+
+        $this->assertIsArray(json_decode($output->stdout(), true), 'stdout was not JSON: ' . $output->stdout());
+        $this->assertStringContainsString('live-storage', $output->stderr());
     }
 
     #[Test]

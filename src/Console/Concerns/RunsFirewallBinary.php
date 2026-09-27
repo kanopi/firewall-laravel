@@ -66,6 +66,49 @@ trait RunsFirewallBinary
     private const SECRET_ENV = 'KANOPI_FIREWALL_LARAVEL_CLI_SECRET';
 
     /**
+     * The script's stdout while it is being captured, or NULL when streaming.
+     */
+    private ?string $capturedStdout = null;
+
+    /**
+     * Run a bin/ script and hand back its stdout instead of printing it.
+     *
+     * For a command that has to combine the script's output with its own —
+     * `firewall:doctor --json`, whose single document must hold both halves.
+     * Stderr still streams to the error output as it arrives.
+     *
+     * @param array<int, string> $arguments
+     *
+     * @return array{0: int, 1: string}
+     *   The exit code and everything the script wrote to stdout.
+     */
+    protected function captureFirewallBinary(string $script, array $arguments = []): array
+    {
+        $this->capturedStdout = '';
+
+        try {
+            $exitCode = $this->runFirewallBinary($script, $arguments);
+
+            return [$exitCode, $this->capturedStdout];
+        } finally {
+            $this->capturedStdout = null;
+        }
+    }
+
+    /**
+     * The exit code for a failure of this wrapper rather than of the script.
+     *
+     * Overridden where the script's own codes are verdicts: for
+     * `firewall:check`, 1 and 2 mean "blocked" and "challenged", so a wrapper
+     * failure reported as either would let a CI gate asserting a block pass
+     * on a check that never ran (#11).
+     */
+    protected function wrapperFailureExitCode(): int
+    {
+        return self::EXIT_CONFIG_UNREADABLE;
+    }
+
+    /**
      * Run a bin/ script with the effective configuration.
      *
      * @param string $script
@@ -131,7 +174,7 @@ trait RunsFirewallBinary
                 $binary
             ));
 
-            return self::EXIT_CONFIG_UNREADABLE;
+            return $this->wrapperFailureExitCode();
         }
 
         $configPath = null;
@@ -141,7 +184,16 @@ trait RunsFirewallBinary
             $environment = [];
 
             if ($withConfig) {
-                [$configPath, $secret] = $this->writeEffectiveConfig();
+                try {
+                    [$configPath, $secret] = $this->writeEffectiveConfig();
+                } catch (IntegrationException $exception) {
+                    // Reported and turned into this command's failure code,
+                    // rather than left to Artisan's generic handler, whose
+                    // exit 1 is a verdict for `firewall:check` (#11).
+                    $this->components->error($exception->getMessage());
+
+                    return $this->wrapperFailureExitCode();
+                }
 
                 $command[] = $configAsOption ? '--config=' . $configPath : $configPath;
 
@@ -161,14 +213,24 @@ trait RunsFirewallBinary
             // Streamed rather than buffered, so `firewall-doctor` on a slow
             // database prints each finding as it is reached instead of
             // appearing to hang and then producing everything at once.
+            //
+            // Stderr goes to the error output. The scripts keep stdout clean
+            // so that `--json` is parseable, and writing their warnings onto
+            // stdout here undid that (#8).
             $exitCode = $process->run(function (string $type, string $buffer): void {
-                $type === Process::ERR
-                    ? $this->output->write('<comment>' . $buffer . '</>')
-                    : $this->output->write($buffer);
+                if ($type === Process::ERR) {
+                    $this->output->getErrorStyle()->write('<comment>' . $buffer . '</>');
+                } elseif ($this->capturedStdout !== null) {
+                    $this->capturedStdout .= $buffer;
+                } else {
+                    $this->output->write($buffer);
+                }
             });
 
             if ($configPath !== null && $this->shouldKeepConfig()) {
-                $this->components->info(sprintf('Effective configuration written to %s', $configPath));
+                // Error output for the same reason: this note is not part of
+                // the script's answer, and must not land inside its JSON.
+                $this->output->getErrorStyle()->writeln(sprintf('Effective configuration written to %s', $configPath));
                 $configPath = null;
             }
 

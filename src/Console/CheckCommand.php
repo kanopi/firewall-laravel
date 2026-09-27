@@ -44,6 +44,19 @@ final class CheckCommand extends FirewallCommand
      */
     protected $description = 'Check whether a request would be blocked, and by which rule';
 
+    /**
+     * `bin/firewall-check`'s internal-error code.
+     *
+     * 0, 1 and 2 are the check's verdicts — allowed, blocked, challenged — so
+     * this wrapper failing must not come out as any of them (#11).
+     */
+    public const EXIT_INTERNAL = 70;
+
+    protected function wrapperFailureExitCode(): int
+    {
+        return self::EXIT_INTERNAL;
+    }
+
     public function handle(): int
     {
         // `firewall-check` takes its config as `--config=FILE` rather than

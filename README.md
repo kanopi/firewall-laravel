@@ -529,7 +529,10 @@ worth knowing before you wire them into anything:
   belts as well as braces.
 - **`--json` on `firewall:health`, `firewall:doctor`, `firewall:check`,
   `firewall:block` and `firewall:rule`**, for the steps where something other
-  than a person is reading.
+  than a person is reading. Stdout is JSON and nothing else: the scripts'
+  warnings go to stderr. `firewall:doctor --json` prints one document, with
+  the Laravel checks under `integration` and the library's report under
+  `library`.
 - **`--dry-run` on `firewall:block --lift`, `firewall:rule`,
   `firewall:sources`, `firewall:migrate` and `firewall:log-prune`**, so a
   deploy step can report what it would change before it is allowed to.
@@ -656,6 +659,10 @@ and it buys `--help` that describes the command, rejection of a mistyped option
 before it reaches the script and gets ignored, and shell completion. Exit codes
 are the scripts' own, forwarded unchanged, so a deploy step can gate on
 `php artisan firewall:doctor` exactly as it would on `bin/firewall-doctor`.
+When the wrapper itself fails (the script is missing, or the configuration
+cannot be written out), commands exit 2, except `firewall:check`, which exits
+70 like the script's own internal errors, because 1 and 2 are its "blocked" and
+"challenged" verdicts.
 
 Two names differ from the scripts: `--quiet` becomes `--quiet-output` (Symfony
 Console reserves `--quiet` for verbosity), and `firewall:doctor` takes
