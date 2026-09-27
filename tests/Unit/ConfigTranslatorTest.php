@@ -167,6 +167,21 @@ final class ConfigTranslatorTest extends TestCase
         }
     }
 
+    /**
+     * Under `require_config`, a missing path reaches the library so it can refuse to start (#19).
+     */
+    #[Test]
+    public function require_config_passes_a_missing_path_through(): void
+    {
+        $translator = $this->translator([
+            'configs' => ['/no/such/file.yml'],
+            'global' => ['require_config' => true],
+        ]);
+
+        $this->assertContains('/no/such/file.yml', $translator->configs());
+        $this->assertSame(['/no/such/file.yml'], $translator->missingConfigs());
+    }
+
     #[Test]
     public function it_ignores_a_configs_key_that_is_not_a_list(): void
     {

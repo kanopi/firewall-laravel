@@ -423,13 +423,21 @@ final class ConfigTranslator
     }
 
     /**
-     * Extra YAML paths, as configured, keeping only ones that exist.
+     * Extra YAML paths, as configured.
      *
-     * A configured-but-absent path is dropped here rather than passed on,
-     * because the library's reaction to a missing config input is an error log
-     * on every single request — so passing one through would trade a single
-     * clear diagnosis for a permanent stream of noise. It is reported once, by
-     * `firewall:doctor`, through `missingConfigs()`.
+     * A configured-but-absent path is normally dropped here rather than passed
+     * on, because the library's reaction to a missing config input is an error
+     * log on every single request — so passing one through would trade a
+     * single clear diagnosis for a permanent stream of noise. It is reported
+     * once, by `firewall:doctor`, through `missingConfigs()`.
+     *
+     * Except under `global.require_config: true`, where it is passed through.
+     * That setting asks for a missing file to stop the firewall starting, and
+     * the library can only refuse a path it is shown: dropping it here turned
+     * a deploy that failed to ship its rules into a firewall running with none
+     * — failing open under the one setting written to make it fail closed
+     * (#19). The noise does not arise, because the library throws instead of
+     * logging.
      *
      * @return array<int, string>
      */
@@ -441,10 +449,13 @@ final class ConfigTranslator
             return [];
         }
 
-        return array_values(array_filter(
-            array_filter($configs, is_string(...)),
-            static fn (string $path): bool => is_file($path)
-        ));
+        $paths = array_values(array_filter($configs, is_string(...)));
+
+        if (($this->section('global')['require_config'] ?? false) === true) {
+            return $paths;
+        }
+
+        return array_values(array_filter($paths, static fn (string $path): bool => is_file($path)));
     }
 
     /**
