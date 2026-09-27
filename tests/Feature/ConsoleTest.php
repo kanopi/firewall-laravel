@@ -349,10 +349,28 @@ final class ConsoleTest extends TestCase
     {
         $this->assertFileDoesNotExist($this->managedRulesPath());
 
-        $this->artisan('firewall:rule', ['action' => 'list'])
+        $this->artisan('firewall:rule', ['action' => 'add', '--ip' => ['203.0.113.56']])
             ->assertExitCode(FirewallCommand::EXIT_OK);
 
         $this->assertFileExists($this->managedRulesPath());
+    }
+
+    /**
+     * Reading and dry runs leave no managed file behind (#12).
+     *
+     * Both used to run the auto-init first, so `list` and `add --dry-run`
+     * created `config/firewall-managed.yml` as a side effect.
+     */
+    #[Test]
+    public function rule_list_and_dry_run_write_nothing(): void
+    {
+        $this->artisan('firewall:rule', ['action' => 'list'])
+            ->assertExitCode(FirewallCommand::EXIT_OK);
+
+        $this->artisan('firewall:rule', ['action' => 'add', '--ip' => ['203.0.113.57'], '--dry-run' => true])
+            ->assertExitCode(FirewallCommand::EXIT_OK);
+
+        $this->assertFileDoesNotExist($this->managedRulesPath());
     }
 
     #[Test]
