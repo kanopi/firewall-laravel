@@ -25,6 +25,7 @@ use Kanopi\Firewall\Laravel\Config\LogHandlers;
 use Kanopi\Firewall\Laravel\Config\TrustedProxies;
 use Kanopi\Firewall\Laravel\Console\BlockAddCommand;
 use Kanopi\Firewall\Laravel\Console\BlockCommand;
+use Kanopi\Firewall\Laravel\Console\ChallengeCommand;
 use Kanopi\Firewall\Laravel\Console\CheckCommand;
 use Kanopi\Firewall\Laravel\Console\DoctorCommand;
 use Kanopi\Firewall\Laravel\Console\FindReferenceCommand;
@@ -59,6 +60,7 @@ final class FirewallServiceProvider extends ServiceProvider
     private const COMMANDS = [
         BlockAddCommand::class,
         BlockCommand::class,
+        ChallengeCommand::class,
         CheckCommand::class,
         DoctorCommand::class,
         FindReferenceCommand::class,
