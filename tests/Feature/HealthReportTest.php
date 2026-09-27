@@ -145,6 +145,67 @@ final class HealthReportTest extends TestCase
         }
     }
 
+    /**
+     * `healthy` agrees with `errors`: a panic file that did not apply is unhealthy (#10).
+     *
+     * It used to follow failed rules only, so a probe reading `healthy` missed
+     * a kill switch somebody reached for and that did not take.
+     */
+    #[Test]
+    public function a_panic_file_that_was_not_applied_is_unhealthy(): void
+    {
+        $panic = tempnam(sys_get_temp_dir(), 'fw-panic-');
+        $this->assertIsString($panic);
+        file_put_contents($panic, "not-a-mode\n");
+
+        try {
+            config(['firewall.global.panic_file' => $panic]);
+
+            $report = $this->report();
+
+            $this->assertNotSame([], $report['errors']);
+            $this->assertFalse($report['healthy']);
+        } finally {
+            unlink($panic);
+        }
+    }
+
+    /**
+     * A rule outside its `metadata.active` window is listed, not warned about (#13).
+     */
+    #[Test]
+    public function a_sleeping_rule_is_listed_and_still_healthy(): void
+    {
+        config(['firewall.plugins' => [[
+            'plugin' => \Kanopi\Firewall\Plugins\IpAddress::class,
+            'response' => 'block',
+            'name' => 'campaign-block',
+            'metadata' => ['active' => ['timezone' => 'UTC', 'from' => '2099-01-01']],
+            'config' => ['198.51.100.1'],
+        ]]]);
+
+        $report = $this->report();
+
+        $this->assertCount(1, $report['sleeping_rules']);
+        $this->assertTrue($report['healthy']);
+        $this->assertSame([], $report['warnings']);
+    }
+
+    /**
+     * Lockdown is a warning: deliberate, temporary, and refusing almost everybody (#13).
+     */
+    #[Test]
+    public function lockdown_is_reported_as_a_warning(): void
+    {
+        config(['firewall.global.lockdown' => true]);
+
+        $report = $this->report();
+
+        $this->assertTrue($report['locked_down']);
+        $this->assertTrue($report['healthy']);
+        $this->assertStringContainsString('LOCKDOWN', implode("\n", $report['warnings']));
+    }
+
     #[Test]
     public function no_panic_file_reports_an_inactive_switch(): void
     {

@@ -66,6 +66,23 @@ final class HealthCommandTest extends TestCase
      * request, looks entirely healthy, and is running one rule short.
      */
     #[Test]
+    public function it_lists_a_sleeping_rule_without_claiming_every_rule_is_running(): void
+    {
+        config(['firewall.plugins' => [[
+            'plugin' => \Kanopi\Firewall\Plugins\IpAddress::class,
+            'response' => 'block',
+            'name' => 'campaign-block',
+            'metadata' => ['active' => ['timezone' => 'UTC', 'from' => '2099-01-01']],
+            'config' => ['198.51.100.1'],
+        ]]]);
+
+        $this->artisan('firewall:health')
+            ->expectsOutputToContain('Asleep: block rule')
+            ->expectsOutputToContain('Every rule in its window is running')
+            ->assertExitCode(0);
+    }
+
+    #[Test]
     public function a_rule_that_cannot_be_built_exits_non_zero(): void
     {
         config(['firewall.plugins' => [[
@@ -142,7 +159,9 @@ final class HealthCommandTest extends TestCase
             'configured_mode',
             'mode_overridden',
             'panic_switch',
+            'locked_down',
             'failed_rules',
+            'sleeping_rules',
             'degraded_backends',
             'errors',
             'warnings',
