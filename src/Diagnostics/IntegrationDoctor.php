@@ -18,6 +18,7 @@ use Kanopi\Firewall\Laravel\Config\LogHandlers;
 use Kanopi\Firewall\Laravel\Config\TrustedProxies;
 use Kanopi\Firewall\Laravel\Http\Middleware\EvaluateFirewall;
 use Kanopi\Firewall\Laravel\Support\Settings;
+use Kanopi\Firewall\Utility\Config;
 
 /**
  * Diagnose the parts of the setup that only exist because this is Laravel.
@@ -189,8 +190,20 @@ final class IntegrationDoctor
     {
         $declared = $this->trustedProxies->declared();
         $inForce = $this->trustedProxies->inForce();
+        $firewallDeclares = $this->firewallTrustedProxies() !== [];
 
         if ($declared === null && $inForce === []) {
+            if ($firewallDeclares) {
+                return [Diagnosis::ok(
+                    'Trusted proxies are declared in the firewall config only',
+                    'global.trusted_proxies applies to the firewall\'s own reads, for one '
+                    . 'evaluation at a time, so its rules see the visitor. The rest of the '
+                    . 'application does not: $request->getClientIp() still returns the proxy '
+                    . 'everywhere else. Configuring TrustProxies instead gives both the same '
+                    . 'answer from one place.'
+                )];
+            }
+
             return [Diagnosis::warning(
                 'No trusted proxies are configured',
                 'Laravel declares no trusted proxies, so $request->getClientIp() returns the '
@@ -203,20 +216,40 @@ final class IntegrationDoctor
             )];
         }
 
+        $diagnoses = [];
+
+        // Both set is not a conflict the library resolves in the firewall's
+        // favour: whenever TrustProxies has run first — the correct order —
+        // the library ignores global.trusted_proxies and logs that it did. So
+        // the firewall's list only ever takes effect when the stack is
+        // misordered, which is the one time nobody is looking at it.
+        if ($firewallDeclares) {
+            $diagnoses[] = Diagnosis::warning(
+                'Trusted proxies are declared twice',
+                'Both Laravel and the firewall\'s global.trusted_proxies declare trusted '
+                . 'proxies. Once TrustProxies has run, the library ignores its own list and '
+                . 'logs a warning, so the two can drift without anything else noticing. '
+                . 'Remove global.trusted_proxies and keep TrustProxies as the one source.',
+                'docs/configuration/global.md#trusted-proxies'
+            );
+        }
+
         // Run from Artisan, no HTTP middleware has executed, so an empty
         // in-force list is expected and says nothing about the web stack. Only
         // the declaration is checkable here.
         if ($this->runningInConsole) {
-            return [Diagnosis::ok(
+            $diagnoses[] = Diagnosis::ok(
                 'Trusted proxies are configured',
                 'Ordering against TrustProxies cannot be checked from the console — no HTTP '
                 . 'middleware has run. It is verified on every web request instead, and '
                 . 'reported at error level when wrong.'
-            )];
+            );
+
+            return $diagnoses;
         }
 
         if ($this->trustedProxies->isSpoofable()) {
-            return [Diagnosis::error(
+            $diagnoses[] = Diagnosis::error(
                 'The firewall middleware runs before TrustProxies',
                 'Trusted proxies are declared but not in force at the point the firewall '
                 . 'evaluates, so every rule reads the proxy address as the client address and '
@@ -224,13 +257,44 @@ final class IntegrationDoctor
                 . 'firewall.middleware.global = true and let this package position the '
                 . 'middleware, or move EvaluateFirewall after TrustProxies yourself.',
                 'docs/configuration/global.md#trusted-proxies'
-            )];
+            );
+
+            return $diagnoses;
         }
 
-        return [Diagnosis::ok(
+        $diagnoses[] = Diagnosis::ok(
             'Trusted proxies are in force before the firewall runs',
             sprintf('%d proxy entr%s trusted.', count($inForce), count($inForce) === 1 ? 'y' : 'ies')
-        )];
+        );
+
+        return $diagnoses;
+    }
+
+    /**
+     * `global.trusted_proxies` as the library will see it (2.33).
+     *
+     * Read from the merged configuration rather than from `firewall.global`,
+     * because a preset or an extra YAML file can set it too, and the library
+     * acts on whichever of them wins the merge.
+     *
+     * `Config::load()` is lenient: a file it cannot read is recorded rather
+     * than thrown, and the config check below reports it. So there is nothing
+     * to catch here, and a catch would be dead code.
+     *
+     * @return array<int, mixed>
+     *   Empty when nothing declares it.
+     */
+    private function firewallTrustedProxies(): array
+    {
+        $global = Config::load($this->translator->configs())['global'] ?? null;
+
+        $declared = is_array($global) ? ($global['trusted_proxies'] ?? null) : null;
+
+        if (in_array($declared, [null, [], ''], true)) {
+            return [];
+        }
+
+        return is_array($declared) ? array_values($declared) : [$declared];
     }
 
     /**

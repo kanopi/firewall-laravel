@@ -273,6 +273,48 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Connections, Tarpit, Events and Metrics
+    |--------------------------------------------------------------------------
+    |
+    | Library sections passed through as written, each inert until set:
+    |
+    |  - `connections` (2.33): a client declared once by name and handed to
+    |    anything that takes one with `%connection(name)%`.
+    |  - `tarpit` (2.30): the cap on `response => tarpit` rules. A tarpit
+    |    holds a PHP worker for the length of the delay; `max_concurrent` is
+    |    how many may be held at once, across every tarpit rule. Under Octane
+    |    that is a long-lived worker, so keep the cap well below the pool.
+    |  - `events` (2.33): listeners built from configuration. Laravel's own
+    |    `Event::listen()` already receives every decision, so this is only
+    |    worth using for a listener you would rather declare than register.
+    |  - `metrics` (2.33): the StatsD exporter over the decision events.
+    |
+    | The shapes are the library's, documented at
+    | https://kanopi.github.io/firewall/latest/.
+    |
+    */
+
+    // 'connections' => [
+    //     'redis' => ['dsn' => 'redis://127.0.0.1:6379', 'timeout' => 3],
+    // ],
+
+    // 'tarpit' => [
+    //     'max_concurrent' => 5,
+    //     'max_seconds' => 10,
+    // ],
+
+    // 'events' => [
+    //     'listeners' => [
+    //         ['class' => \App\Firewall\NotifyOnBan::class, 'events' => ['RequestBlocked']],
+    //     ],
+    // ],
+
+    // 'metrics' => [
+    //     'statsd' => ['host' => '127.0.0.1', 'port' => 8125, 'prefix' => 'app.'],
+    // ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Logging
     |--------------------------------------------------------------------------
     |

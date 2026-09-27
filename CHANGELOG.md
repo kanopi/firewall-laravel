@@ -5,6 +5,37 @@ All notable changes to `kanopi/firewall-laravel` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Requires `kanopi/firewall` ^2.33** (was ^2.26). No library API this package
+  calls was removed or changed. Upgrading brings the library's own behaviour
+  changes with it, worth reading before deploying: block records no longer keep
+  cookies, most headers or the request body (2.31); a challenge pass lasts at
+  most `challenge.ttl`, an hour by default (2.30); a rule source larger than
+  32 MiB fails instead of loading (2.30); and a request with no client address
+  is no longer added to the block list (2.33).
+
+### Fixed
+
+- **The pass cookie's lifetime came from the visitor.** `FirewallResponder`
+  set the cookie's expiry from the `ttl` field the interstitial posts back —
+  the value the library clamped in 2.30 and stopped believing in 2.32. It now
+  reads the solved token's signed `exp` claim through the library's
+  `ChallengePasses`, so the cookie expires with the token.
+- **`tarpit`, `events`, `metrics` and `connections` set in
+  `config/firewall.php` were dropped silently.** They are library sections
+  added in 2.30 and 2.33, and are now passed through as written.
+
+### Added
+
+- **`firewall:doctor` understands `global.trusted_proxies`** (2.33). Declared
+  only there, the posture is reported as resolved for the firewall, with a note
+  that the rest of the application still sees the proxy. Declared there and in
+  Laravel, it warns: once `TrustProxies` has run, the library ignores its own
+  list.
+
 ## [1.0.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.0.0) — 2026-09-12
 
 ### Added

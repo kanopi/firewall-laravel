@@ -45,8 +45,23 @@ final class ConfigTranslator
      * `plugins:` list and this one concatenate rather than replace — which is
      * the useful behaviour (start from a preset, add your own allow rules) and
      * is only true if ours arrives afterwards.
+     *
+     * `tarpit` (2.30) and `events`, `metrics` and `connections` (2.33) are
+     * library sections with no Laravel-specific meaning, so they pass through
+     * as written. Before they were listed here they could only be set from an
+     * extra YAML file, and a key set in `config/firewall.php` was dropped
+     * without a word.
      */
-    private const PASSTHROUGH_SECTIONS = ['global', 'storage', 'challenge', 'plugins'];
+    private const PASSTHROUGH_SECTIONS = [
+        'global',
+        'storage',
+        'challenge',
+        'connections',
+        'tarpit',
+        'events',
+        'metrics',
+        'plugins',
+    ];
 
     /**
      * Modes that write a response themselves, and so cannot be passed through.

@@ -119,6 +119,37 @@ final class IntegrationDoctorTest extends TestCase
     }
 
     /**
+     * `global.trusted_proxies` alone (2.33) resolves the posture for the firewall.
+     *
+     * Reported as fine, with a note that the rest of the application still
+     * sees the proxy — the library applies the list to its own reads only.
+     */
+    #[Test]
+    public function it_accepts_trusted_proxies_declared_only_in_the_firewall_config(): void
+    {
+        config(['firewall.global.trusted_proxies' => ['10.0.0.0/8']]);
+
+        $findings = $this->diagnose();
+
+        $this->assertFindingMatches(Diagnosis::OK, '/declared in the firewall config only/', $findings);
+        $this->assertNoFindingMentions('No trusted proxies are configured');
+    }
+
+    /**
+     * Declared in both places, the firewall's list is ignored once TrustProxies has run.
+     */
+    #[Test]
+    public function it_warns_when_trusted_proxies_are_declared_twice(): void
+    {
+        config([
+            'trustedproxy.proxies' => ['10.0.0.1'],
+            'firewall.global.trusted_proxies' => ['10.0.0.0/8'],
+        ]);
+
+        $this->assertFindingMatches(Diagnosis::WARNING, '/declared twice/', $this->diagnose());
+    }
+
+    /**
      * From the console, ordering cannot be checked, and the report says so.
      *
      * No HTTP middleware has run, so an empty in-force list means nothing about

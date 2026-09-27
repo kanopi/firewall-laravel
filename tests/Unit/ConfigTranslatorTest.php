@@ -191,6 +191,29 @@ final class ConfigTranslatorTest extends TestCase
     }
 
     /**
+     * The sections added in 2.30 and 2.33 reach the library, ahead of `plugins`.
+     */
+    #[Test]
+    public function it_passes_through_the_sections_added_since_2_26(): void
+    {
+        $sections = [
+            'connections' => ['redis' => ['dsn' => 'redis://127.0.0.1:6379']],
+            'tarpit' => ['max_concurrent' => 5],
+            'events' => ['listeners' => [['class' => 'App\\Listener']]],
+            'metrics' => ['statsd' => ['host' => '127.0.0.1', 'port' => 8125]],
+        ];
+
+        $inline = $this->translator($sections + ['plugins' => [['plugin' => 'A']]])->inlineConfig();
+
+        foreach ($sections as $name => $value) {
+            $this->assertSame($value, $inline[$name]);
+        }
+
+        $keys = array_keys($inline);
+        $this->assertSame(count($keys) - 1, array_search('plugins', $keys, true));
+    }
+
+    /**
      * `plugins` must be the last section, so a preset's rules concatenate.
      */
     #[Test]
