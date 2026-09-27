@@ -320,6 +320,21 @@ final class ServiceProviderTest extends TestCase
     }
 
     /**
+     * `response: redirect` raised outside the middleware redirects, not 500s (#7).
+     */
+    #[Test]
+    public function a_redirect_thrown_outside_the_middleware_redirects(): void
+    {
+        Route::get('/manual-redirect', static function (): never {
+            throw new \Kanopi\Firewall\Exception\FirewallRedirectException('https://status.example.com/', 307);
+        });
+
+        $this->get('/manual-redirect')
+            ->assertStatus(307)
+            ->assertRedirect('https://status.example.com/');
+    }
+
+    /**
      * The registration guards, exercised on a container missing each binding.
      *
      * White-box on purpose: these are the branches that let the package boot

@@ -20,6 +20,7 @@ use Illuminate\Contracts\View\Factory as ViewFactory;
 use Kanopi\Firewall\Exception\ChallengeRequiredException;
 use Kanopi\Firewall\Exception\ChallengeSolvedException;
 use Kanopi\Firewall\Exception\FirewallBlockedException;
+use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Firewall;
 use Kanopi\Firewall\Laravel\Config\LogHandlers;
 use Kanopi\Firewall\Laravel\Config\TrustedProxies;
@@ -332,6 +333,13 @@ final class FirewallServiceProvider extends ServiceProvider
 
         $handler->renderable(static fn (ChallengeRequiredException $e, Request $request): Response =>
             $responder()->challenge($request, $e));
+
+        // `response: redirect` (2.26). Missed when the middleware learned it,
+        // so a redirect raised by an `evaluate()` in host code reached the
+        // handler unrendered and came out as a 500 (#7). Lockdown needs no
+        // entry of its own: its exception extends the block one.
+        $handler->renderable(static fn (FirewallRedirectException $e): Response =>
+            $responder()->redirect($e));
     }
 
     /**
