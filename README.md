@@ -353,9 +353,9 @@ Event::listen(RequestBlocked::class, function (RequestBlocked $event) {
 });
 ```
 
-All six events — `RequestAllowed`, `RequestBlocked`, `RequestChallenged`,
-`ChallengeSolved`, `ChallengeFailed` and `RequestTarpitted` — are read-only by
-design. Two consequences
+All nine events — `RequestAllowed`, `RequestBlocked`, `RequestChallenged`,
+`ChallengeSolved`, `ChallengeFailed`, `RequestRedirected`, `RequestRecorded`,
+`RequestMarked` and `RequestTarpitted` — are read-only by design. Two consequences
 are easy to build against by accident:
 
 - **Returning `false` from a listener does not halt anything.** Laravel treats a

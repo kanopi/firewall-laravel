@@ -121,7 +121,8 @@ class EvaluateFirewall
      * It also removes a dependency on something outside this package's control:
      * `evaluate()`'s `@throws` list. In 2.26.0 that list still names only the
      * four exceptions that predate `response: redirect`, so static analysis
-     * reading it concludes a `catch (FirewallRedirectException)` is dead code.
+     * reading it concludes a `catch (FirewallRedirectException)` is dead code
+     * (2.27 corrected the list after this package reported it).
      * It is not — the exception is raised at runtime — but a docblock is a
      * courtesy for unchecked exceptions, not a contract, and code that depends
      * on one being exhaustive is depending on the wrong thing.
