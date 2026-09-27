@@ -68,6 +68,27 @@ final class StorageDirectoriesTest extends TestCase
         $this->assertDirectoryExists($this->storage . '/a/b/c');
     }
 
+    /**
+     * `SharedStorage`'s nested local copy gets its directory too (#21).
+     *
+     * It is the store that keeps the block list alive while the shared one is
+     * unreachable, so a directory nobody created is a fallback that fails in
+     * the one situation it exists for.
+     */
+    #[Test]
+    public function it_creates_directories_for_shared_storage_sides(): void
+    {
+        $this->directories()->ensureFor([
+            'type' => 'Kanopi\\Firewall\\Storage\\SharedStorage',
+            'config' => [
+                'shared' => ['type' => 'Kanopi\\Firewall\\Storage\\RedisStorage', 'config' => ['prefix' => 'fw:']],
+                'local' => ['type' => 'Kanopi\\Firewall\\Storage\\FileStorage', 'config' => ['storage_file' => $this->storage . '/local/blocked.data']],
+            ],
+        ]);
+
+        $this->assertDirectoryExists($this->storage . '/local');
+    }
+
     #[Test]
     public function it_creates_directories_for_every_file_setting(): void
     {
