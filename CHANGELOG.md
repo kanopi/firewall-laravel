@@ -5,6 +5,55 @@ All notable changes to `kanopi/firewall-laravel` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.2.0) — 2026-09-27
+
+The last test gaps from the 1.1.0 review are closed. The firewall now runs in
+CI against real Redis and Memcached servers and under a real Octane worker.
+The Octane test found a bug, and this release fixes it.
+
+### Upgrading
+
+Nothing to change. One behaviour change, and only if you set
+`firewall.octane.persist_instance = true` under Octane:
+
+- **The firewall is now built once per worker, as documented.** Until now it
+  was rebuilt on every request, so a panic file took effect immediately even
+  with this option on. It no longer does: a persistent instance keeps the mode
+  it booted with until the workers restart, which is the caveat the README has
+  always described and `firewall:doctor` already reports. Leave
+  `persist_instance` off (the default) if you rely on the panic switch.
+
+### Fixed
+
+- **`octane.persist_instance` did not persist the firewall under Octane
+  (#38).** Octane serves each request from a clone of the worker's
+  application, so a singleton first resolved during a request was discarded
+  with the clone. The option did nothing, and the firewall was rebuilt per
+  request like the default. It is now built when the worker starts (Octane's
+  `WorkerStarting` event), on the worker's own application. If it cannot be
+  built then, that is logged and it is built per request under the usual
+  `on_boot_failure` policy, rather than stopping the worker from booting.
+
+### Tests
+
+- **Real Octane worker (#17).** `composer test:octane` and a new CircleCI
+  `octane` job run the firewall under RoadRunner with two workers. They check:
+  - enforcement, although RoadRunner's `PHP_SAPI` is `cli`
+  - a block lifted from the CLI applying on the next request
+  - a panic file honoured by every worker on the next request, with no reload
+  - as a control, a `persist_instance` worker ignoring that same panic file
+- **Real Redis and Memcached (#17).** A new `services` suite
+  (`composer test:services` in Docker, and a CircleCI `services` job with the
+  servers as service containers) covers:
+  - a block earned in one process and enforced by the next
+  - a Redis rate limit counted across requests
+  - range lifts through the real Memcached index
+  - a 90-day Memcached ban
+  - `SharedStorage` mirroring locally and falling back when Redis is down
+
+  It is not part of `composer test`. `FIREWALL_SERVICES_REQUIRED=1` turns a
+  missing server into a failure instead of a skip.
+
 ## [1.1.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.1.0) — 2026-09-27
 
 Support for kanopi/firewall 2.33, and the fixes from a pre-release review.
