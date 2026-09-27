@@ -397,7 +397,7 @@ It reports four conditions that each look identical to a working firewall:
   skipped, and the request is evaluated by the rules that *did* build. For an
   `allow` rule that is merely annoying; for a `block` rule it is a fail-open,
   and a firewall running three rules short looks exactly like a firewall running
-  correctly. This is the only condition reported as **unhealthy**.
+  correctly. Reported as an error, which makes the firewall **unhealthy**.
 - **A rule that is running blind.** The Redis backends catch a connection
   failure, log it, and answer every read as though nothing were stored — so the
   plugin constructs, the rule reports healthy, and a rate limit counts nothing.
@@ -409,7 +409,13 @@ It reports four conditions that each look identical to a working firewall:
 - **A panic file that did nothing** — empty, unreadable, or naming something
   that is not a mode. Somebody reached for the switch and it did not take, and
   they are watching the site rather than the logs to find that out. Reported as
-  an error.
+  an error, so also unhealthy: `healthy` is false exactly when `errors` is not
+  empty.
+- **Lockdown.** Every visitor not on an allowlist is refused. Deliberate and
+  meant to be temporary, like the panic switch, so it is a warning.
+- **A rule outside its schedule** (`metadata.active`). Listed under
+  `sleeping_rules` but not a warning, because a schedule doing what it says is
+  not a problem. The human output stops claiming every rule is running.
 
 No route is shipped for this. A health endpoint's path and authentication are
 application decisions, and a package that guessed at both would be guessed
@@ -595,7 +601,9 @@ php artisan firewall:health --json
     "configured_mode": "exception",
     "mode_overridden": false,
     "panic_switch": { "active": false, "mode": null, "path": null, "problem": null },
+    "locked_down": false,
     "failed_rules": [],
+    "sleeping_rules": [],
     "degraded_backends": [],
     "errors": [],
     "warnings": []

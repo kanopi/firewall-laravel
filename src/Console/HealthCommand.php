@@ -29,8 +29,9 @@ use Kanopi\Firewall\Laravel\Support\HealthReport;
  * - `firewall:health` asks **is this working right now**. It is a monitoring
  *   probe: run it every minute, and the only thing consuming it is a script.
  *   Its output is a fixed, flat shape — `healthy`, `mode`, `panic_switch`,
- *   `failed_rules`, `degraded_backends` — that a check can key off without
- *   parsing sentences.
+ *   `locked_down`, `failed_rules`, `sleeping_rules`, `degraded_backends` —
+ *   that a check can key off without parsing sentences. `healthy` is false
+ *   exactly when `errors` is non-empty.
  *
  * It also reports one thing the doctor cannot: `getDegradedBackends()`, the
  * backends that constructed successfully and cannot reach their store. Those
@@ -97,6 +98,7 @@ final class HealthCommand extends Command
      *     mode: string,
      *     configured_mode: string,
      *     mode_overridden: bool,
+     *     sleeping_rules: array<int, array{bucket: string, plugin: string, window: string}>,
      *     errors: array<int, string>,
      *     warnings: array<int, string>
      * } $report
@@ -127,9 +129,20 @@ final class HealthCommand extends Command
             $this->components->warn($warning);
         }
 
+        // Listed as information, not as a warning: a rule outside its
+        // `metadata.active` window is a schedule working as written.
+        foreach ($report['sleeping_rules'] as $rule) {
+            $this->components->twoColumnDetail(
+                sprintf('Asleep: %s rule %s', $rule['bucket'], $rule['plugin']),
+                sprintf('<fg=gray>%s</>', $rule['window'])
+            );
+        }
+
         if ($report['errors'] === [] && $report['warnings'] === []) {
             $this->components->twoColumnDetail(
-                'Every configured rule is running and every backend reachable',
+                $report['sleeping_rules'] === []
+                    ? 'Every configured rule is running and every backend reachable'
+                    : 'Every rule in its window is running and every backend reachable',
                 '<fg=green>OK</>'
             );
         }

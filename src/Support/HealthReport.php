@@ -63,7 +63,9 @@ final class HealthReport
      *     configured_mode: string,
      *     mode_overridden: bool,
      *     panic_switch: array{active: bool, mode: string|null, path: string|null, problem: string|null},
+     *     locked_down: bool,
      *     failed_rules: array<int, array{bucket: string, plugin: string, error: string}>,
+     *     sleeping_rules: array<int, array{bucket: string, plugin: string, window: string}>,
      *     degraded_backends: array<int, array<string, string>>,
      *     errors: array<int, string>,
      *     warnings: array<int, string>
@@ -74,22 +76,32 @@ final class HealthReport
         $failedRules = $this->firewall->getFailedRules();
         $degraded = $this->firewall->getDegradedBackends();
         $panic = $this->panicSwitch();
+        $lockedDown = $this->firewall->isLockedDown();
+        $errors = $this->errors($failedRules, $panic);
 
         return [
             // A degraded backend is deliberately not unhealthy. It is a
             // warning: the firewall is enforcing every rule that does not
             // depend on that store, which is more than nothing and is the
-            // behaviour the library chose on purpose. A failed rule is
-            // unhealthy, because that rule is not running at all.
-            'healthy' => $failedRules === [],
+            // behaviour the library chose on purpose. Anything reported as an
+            // error is unhealthy: a failed rule is not running at all, and a
+            // panic file that did not apply is a kill switch that did not
+            // take. Derived from the errors themselves, so the flag a probe
+            // reads cannot disagree with the list beside it (#10).
+            'healthy' => $errors === [],
             'mode' => $this->firewall->getMode()->value,
             'configured_mode' => $this->firewall->getConfiguredMode()->value,
             'mode_overridden' => $this->firewall->getMode() !== $this->firewall->getConfiguredMode(),
             'panic_switch' => $panic,
+            'locked_down' => $lockedDown,
             'failed_rules' => $failedRules,
+            // Rules outside their `metadata.active` window (2.27). Not a
+            // warning — a schedule doing what it says — but listed, so "every
+            // rule is running" is not claimed while one is deliberately not.
+            'sleeping_rules' => $this->firewall->getSleepingRules(),
             'degraded_backends' => $degraded,
-            'errors' => $this->errors($failedRules, $panic),
-            'warnings' => $this->warnings($degraded, $panic),
+            'errors' => $errors,
+            'warnings' => $this->warnings($degraded, $panic, $lockedDown),
         ];
     }
 
@@ -151,10 +163,11 @@ final class HealthReport
      *
      * @param array<int, array<string, string>> $degraded
      * @param array{active: bool, mode: string|null, path: string|null, problem: string|null} $panic
+     * @param bool $lockedDown
      *
      * @return array<int, string>
      */
-    private function warnings(array $degraded, array $panic): array
+    private function warnings(array $degraded, array $panic, bool $lockedDown): array
     {
         $warnings = [];
 
@@ -172,6 +185,13 @@ final class HealthReport
                 $backend['error'],
                 $backend['backend']
             );
+        }
+
+        // Lockdown refuses everybody not on an allowlist. Deliberate, like the
+        // panic switch, and like it meant to be temporary — so it is shown to
+        // whoever is looking, rather than discovered from a flood of refusals.
+        if ($lockedDown) {
+            $warnings[] = 'Firewall is in LOCKDOWN: every visitor not on an allowlist is refused.';
         }
 
         if ($panic['active']) {
