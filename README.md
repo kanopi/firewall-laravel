@@ -429,7 +429,7 @@ which is what makes the answer worth having.
 
 ## Artisan commands
 
-The library ships eight scripts in `bin/`, and they are its operational surface.
+The library ships nine scripts in `bin/`, and they are its operational surface.
 Each is wrapped:
 
 | Command | What it does | Exits non-zero when |
@@ -441,6 +441,7 @@ Each is wrapped:
 | `firewall:block` | Block a client **now**, without writing a rule | The address is invalid, or already blocked |
 | `firewall:unblock` | Lift a block, by address or CIDR range, or `--all` | Storage cannot answer |
 | `firewall:find-reference` | Turn a reference from a block page back into a client | No block in force carries it |
+| `firewall:challenge` | Inspect a challenge pass, or revoke one without rotating the secret | The token is not one this config signed, or the revocation was refused |
 | `firewall:rule` | Add, remove, enable and disable rules | The change was refused |
 | `firewall:sources` | Refresh rule sources out of band | A source failed to load |
 | `firewall:migrate` | Bring the firewall's own tables up to the current schema | A change could not be applied |
