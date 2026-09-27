@@ -32,6 +32,7 @@ use Kanopi\Firewall\Laravel\Http\FirewallResponder;
 use Kanopi\Firewall\Laravel\Http\Middleware\EvaluateFirewall;
 use Kanopi\Firewall\Laravel\Support\Settings;
 use Kanopi\Firewall\Laravel\Tests\TestCase;
+use Kanopi\Firewall\Utility\ChallengePasses;
 use Orchestra\Testbench\Attributes\DefineEnvironment;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -113,7 +114,24 @@ final class ServiceProviderTest extends TestCase
         $this->assertInstanceOf(LogHandlers::class, $this->app->make(LogHandlers::class));
         $this->assertInstanceOf(IntegrationDoctor::class, $this->app->make(IntegrationDoctor::class));
         $this->assertInstanceOf(FirewallResponder::class, $this->app->make(FirewallResponder::class));
+        $this->assertInstanceOf(ChallengePasses::class, $this->app->make(ChallengePasses::class));
         $this->assertInstanceOf(Firewall::class, $this->app->make(Firewall::class));
+    }
+
+    /**
+     * A 2.33 section set in `config/firewall.php` reaches the built firewall.
+     *
+     * StatsD is UDP, so building the exporter opens nothing and sends nothing.
+     */
+    #[Test]
+    public function a_metrics_section_in_laravel_config_reaches_the_firewall(): void
+    {
+        $this->assertSame([], $this->app->make(Firewall::class)->getConfiguredListeners());
+
+        $this->app->forgetInstance(Firewall::class);
+        config(['firewall.metrics' => ['statsd' => ['host' => '127.0.0.1', 'port' => 8125]]]);
+
+        $this->assertNotSame([], $this->app->make(Firewall::class)->getConfiguredListeners());
     }
 
     #[Test]
