@@ -62,6 +62,85 @@ final class ResponderTest extends TestCase
     }
 
     /**
+     * A request value in the banning message is escaped once, not twice (#14).
+     *
+     * The library HTML-escapes what it interpolates, and the view escaped it
+     * again, so a path with an apostrophe showed as `&#039;`.
+     */
+    #[Test]
+    public function an_interpolated_request_value_is_escaped_exactly_once(): void
+    {
+        config([
+            'firewall.global.banning_message' => 'No entry to {{ request.path }}',
+            'firewall.plugins' => [[
+                'plugin' => \Kanopi\Firewall\Plugins\Url::class,
+                'response' => 'block',
+                'name' => 'apostrophe',
+                'config' => ['path@starts_with:/o'],
+            ]],
+        ]);
+
+        $html = (string) $this->get("/o'reilly&co")->assertStatus(400)->getContent();
+
+        $this->assertStringContainsString('No entry to /o&#039;reilly&amp;co', $html);
+        $this->assertStringNotContainsString('&amp;#039;', $html);
+
+        $this->getJson("/o'reilly&co")
+            ->assertStatus(400)
+            ->assertExactJson(['message' => "No entry to /o'reilly&co"]);
+    }
+
+    /**
+     * Library-escaped markup stays inert: decoded once, then escaped once by Blade.
+     */
+    #[Test]
+    public function decoding_the_message_does_not_open_markup(): void
+    {
+        $response = $this->responder()->block(
+            Request::create('/'),
+            new FirewallBlockedException('Blocked: &lt;script&gt;alert(1)&lt;/script&gt;', 403)
+        );
+
+        $body = (string) $response->getContent();
+
+        $this->assertStringNotContainsString('<script>alert(1)</script>', $body);
+        $this->assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $body);
+    }
+
+    /**
+     * A JSON client is told the URL the interstitial itself would post to (#14).
+     *
+     * That honours `challenge.submit_url` and a subdirectory base path, where
+     * the configured path alone would 404.
+     */
+    #[Test]
+    public function a_json_challenge_names_the_firewalls_own_submit_url(): void
+    {
+        $this->configureChallenge();
+
+        $exception = $this->challengeException();
+        $request = Request::create('/gated', 'GET', server: ['HTTP_ACCEPT' => 'application/json']);
+
+        $body = json_decode((string) $this->responder()->challenge($request, $exception)->getContent(), true);
+
+        $this->assertIsArray($body);
+        $this->assertSame('/_firewall/challenge', $body['challenge']['path']);
+
+        $subdirectory = new ChallengeRequiredException(
+            'Challenge required',
+            null,
+            null,
+            '',
+            ['submit_url' => '/shop/_firewall/challenge']
+        );
+
+        $body = json_decode((string) $this->responder()->challenge($request, $subdirectory)->getContent(), true);
+
+        $this->assertIsArray($body);
+        $this->assertSame('/shop/_firewall/challenge', $body['challenge']['path']);
+    }
+
+    /**
      * A missing view must not turn a block into a 500.
      *
      * A 500 is both the wrong status — the request was refused, not broken —
