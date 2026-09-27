@@ -87,6 +87,7 @@
         "test:gate": "@phpunit:coverage",
         "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit -c ./phpunit.xml --coverage-html reports/ --coverage-text",
         "test:install": "bash tests/Integration/install.sh",
+        "test:octane": "bash tests/Integration/octane.sh",
         "test:matrix": "bash tests/Integration/matrix.sh",
         "check:coverage-driver": "@php tests/Integration/require-coverage-driver.php",
         "test:ci": "bash tests/Integration/ci-job.sh"
@@ -97,7 +98,8 @@
         "test:install": "Install the package into a freshly created Laravel application and drive it over HTTP. Slow (it runs composer create-project) and the only test that exercises Composer discovery, vendor:publish, real file storage and the cli-server SAPI \u2014 the four things Testbench cannot.",
         "test:matrix": "Run the suite against every supported PHP and Laravel combination in Docker. Slow, and the only way to check a PHP version this machine does not have installed \u2014 it is what produced the support table in the README.",
         "check:coverage-driver": "Fail with an explanation when no coverage driver is loaded. Without it PHPUnit reports \"No tests executed!\", which names the symptom rather than the missing extension \u2014 the first CI run on this repository failed that way in seven jobs.",
-        "test:ci": "Run a CircleCI job's own commands inside the image CI uses, before pushing. The first two pipelines on this repository each failed on a different fault in the CI config, one per push \u2014 this is the loop that catches them in one pass instead."
+        "test:ci": "Run a CircleCI job's own commands inside the image CI uses, before pushing. The first two pipelines on this repository each failed on a different fault in the CI config, one per push \u2014 this is the loop that catches them in one pass instead.",
+        "test:octane": "Run the firewall under a real Laravel Octane worker (RoadRunner): enforcement despite the cli SAPI, a panic file honoured on the next request with no reload, and the persist_instance control. Slow: it creates an application and downloads the RoadRunner binary."
     },
     "config": {
         "optimize-autoloader": true,

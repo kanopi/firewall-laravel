@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Kanopi\Firewall\Laravel;
 
 use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Events\Dispatcher as EventDispatcher;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Contracts\Http\Kernel as HttpKernelContract;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
@@ -42,6 +43,7 @@ use Illuminate\Http\Request;
 use Kanopi\Firewall\Laravel\Diagnostics\IntegrationDoctor;
 use Kanopi\Firewall\Laravel\Exceptions\IntegrationException;
 use Kanopi\Firewall\Laravel\Http\FirewallResponder;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Response;
 use Kanopi\Firewall\Laravel\Http\Middleware\EvaluateFirewall;
 use Kanopi\Firewall\Laravel\Support\BlockManager;
@@ -59,6 +61,11 @@ final class FirewallServiceProvider extends ServiceProvider
      *
      * @var array<int, class-string<\Illuminate\Console\Command>>
      */
+    /**
+     * The event an Octane worker dispatches once its application has booted.
+     */
+    private const OCTANE_WORKER_STARTING = 'Laravel\\Octane\\Events\\WorkerStarting';
+
     private const COMMANDS = [
         BlockAddCommand::class,
         BlockCommand::class,
@@ -175,11 +182,46 @@ final class FirewallServiceProvider extends ServiceProvider
 
         if (Settings::for($this->app)->flag('firewall.octane.persist_instance', false)) {
             $this->app->singleton(Firewall::class, $builder);
+            $this->resolveWhenOctaneWorkerStarts();
 
             return;
         }
 
         $this->app->scoped(Firewall::class, $builder);
+    }
+
+    /**
+     * Build the persistent firewall when an Octane worker boots, not on its first request.
+     *
+     * Octane serves each request from a clone of the worker's application, so
+     * a singleton first resolved *during* a request lives in that clone and is
+     * discarded with it: `persist_instance` bound a singleton that was rebuilt
+     * on every request anyway (#38). Only what is resolved on the worker's own
+     * application survives, which is what Octane's `WorkerStarting` event is
+     * for — the same moment its `warm` list is resolved.
+     *
+     * Named by string so Octane stays optional: without it the event is never
+     * dispatched and this listener never runs.
+     *
+     * A firewall that fails to build here is logged and left unresolved rather
+     * than allowed to stop the worker booting. The next request then builds it
+     * the usual way, where `on_boot_failure` decides what happens — the same
+     * policy as without this option, rather than a worker that cannot start.
+     */
+    private function resolveWhenOctaneWorkerStarts(): void
+    {
+        $this->app->make(EventDispatcher::class)->listen(self::OCTANE_WORKER_STARTING, function (): void {
+            try {
+                $this->app->make(Firewall::class);
+            } catch (\Throwable $exception) {
+                if ($this->app->bound(LoggerInterface::class)) {
+                    $this->app->make(LoggerInterface::class)->warning(
+                        'The firewall could not be built when the Octane worker started; it will be built per request instead',
+                        ['exception' => $exception::class, 'error' => $exception->getMessage()]
+                    );
+                }
+            }
+        });
     }
 
     /**
