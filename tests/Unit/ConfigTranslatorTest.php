@@ -300,6 +300,40 @@ final class ConfigTranslatorTest extends TestCase
         $this->assertSame($handlers, $this->translator([], loggerHandlers: $handlers)->inlineConfig()['logger']);
     }
 
+    /**
+     * Handler instances are delivered as overrides, never as config input (#4).
+     *
+     * The library serializes its config input to key its cache, and
+     * serializing a Monolog handler closes it — or throws, when it holds a
+     * closure. Each instance gets its own key, so the handlers a preset or a
+     * YAML file declared are added to rather than replaced.
+     */
+    #[Test]
+    public function handler_instances_are_overrides_and_plain_definitions_stay_inline(): void
+    {
+        $instance = new \Monolog\Handler\NullHandler();
+        $plain = ['class' => 'Monolog\Handler\NullHandler'];
+        $withObjectArgument = ['class' => 'Monolog\Handler\BufferHandler', 'args' => [[$instance]]];
+
+        $translator = $this->translator([], loggerHandlers: [['class' => $instance], $plain, $withObjectArgument]);
+
+        $this->assertSame([$plain], $translator->inlineConfig()['logger']);
+
+        $overrides = $translator->overrides();
+        $this->assertSame(['class' => $instance], $overrides['[logger][laravel_0]']);
+        $this->assertSame($withObjectArgument, $overrides['[logger][laravel_1]']);
+        // No serialized object (`O:`) anywhere in what the library keys its cache on.
+        $this->assertStringNotContainsString('O:', serialize($translator->configs()));
+    }
+
+    #[Test]
+    public function only_handler_instances_leaves_no_inline_logger_section(): void
+    {
+        $translator = $this->translator([], loggerHandlers: [['class' => new \Monolog\Handler\NullHandler()]]);
+
+        $this->assertArrayNotHasKey('logger', $translator->inlineConfig());
+    }
+
     #[Test]
     public function it_omits_the_logger_section_when_there_are_no_handlers(): void
     {
