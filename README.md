@@ -173,6 +173,14 @@ all three of the mechanisms Laravel has used for it: `TrustProxies::at()` (what
 `$proxies` property on an application's own `TrustProxies` subclass, which is
 how Laravel 10 did it. You do not configure trusted proxies twice.
 
+`kanopi/firewall` 2.33 added `global.trusted_proxies`, and under Laravel it is
+the wrong place for them. The library applies that list only to its own reads,
+and only when nothing has called `Request::setTrustedProxies()` first — which,
+with the middleware correctly ordered, `TrustProxies` always has. So the list
+takes effect only when the stack is misordered, and the rest of your application
+never sees it. Keep proxies in Laravel; `firewall:doctor` warns when both
+declare them.
+
 One deliberate asymmetry: the derived posture is only ever `true` or *unknown*,
 never `false`. Asserting "there is no proxy" is the one answer that silences the
 library's warning completely, and nothing observable from inside PHP justifies
@@ -345,8 +353,9 @@ Event::listen(RequestBlocked::class, function (RequestBlocked $event) {
 });
 ```
 
-All five events — `RequestAllowed`, `RequestBlocked`, `RequestChallenged`,
-`ChallengeSolved`, `ChallengeFailed` — are read-only by design. Two consequences
+All six events — `RequestAllowed`, `RequestBlocked`, `RequestChallenged`,
+`ChallengeSolved`, `ChallengeFailed` and `RequestTarpitted` — are read-only by
+design. Two consequences
 are easy to build against by accident:
 
 - **Returning `false` from a listener does not halt anything.** Laravel treats a
@@ -361,6 +370,10 @@ are easy to build against by accident:
 
 Events are the right place for what is genuinely advisory: a counter, a Slack
 notification, a queued job for enrichment.
+
+For StatsD specifically there is no listener to write: the library's `metrics`
+section (2.33) builds the exporter from configuration, and `config/firewall.php`
+passes it through along with `events`, `connections` and `tarpit`.
 
 ## Health checks
 
@@ -727,6 +740,11 @@ Two more things about Octane specifically:
   on every `translator()` call rather than memoised on the factory, which *is* a
   singleton: a memoised posture would be whatever the first request a worker
   served happened to see.
+- **A `tarpit` rule holds the worker** for the length of its delay — a `sleep()`
+  inside the request, and under Octane that is a long-lived worker out of a
+  fixed pool. The library caps concurrent holds per host (`tarpit.max_concurrent`)
+  and serves the request normally once the cap is full, but set the cap well
+  below your worker count, or leave the tarpitting to a CDN or `nginx`.
 
 ## Fail open or fail closed
 
@@ -766,13 +784,14 @@ says whether `require_config` already makes it fatal.
 ## Response types
 
 `kanopi/firewall` 2.26 added three response types beyond allow, block and
-challenge. Each is set with `response` on a rule.
+challenge, and 2.30 added a fourth. Each is set with `response` on a rule.
 
 | `response` | What happens | Handled how |
 |---|---|---|
 | `redirect` | The visitor is sent to `metadata.redirect_to` | Rendered as a Laravel redirect, with the rule's status (302 unless it says otherwise) |
 | `record` | The offence is written down; **the request carries on** | Nothing to do — non-terminal |
 | `mark` | The request is labelled; **it carries on** | Nothing to do — the labels reach your controller |
+| `tarpit` | The request is held for a few seconds, **then carries on** | Nothing to do — the library holds it; see [Octane](#octane) |
 
 `redirect` is the gentler end of a terminal decision: a status page or a contact
 form for somebody who believes they were caught wrongly, rather than a block

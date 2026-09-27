@@ -65,7 +65,8 @@ final class DispatcherBridge implements EventDispatcherInterface
      *
      * @param object $event
      *   One of `Kanopi\Firewall\Event\{RequestAllowed, RequestBlocked,
-     *   RequestChallenged, ChallengeSolved, ChallengeFailed}`.
+     *   RequestChallenged, ChallengeSolved, ChallengeFailed,
+     *   RequestTarpitted}`.
      *
      * @return object
      *   The same event, as PSR-14 requires. Laravel's listener return values
