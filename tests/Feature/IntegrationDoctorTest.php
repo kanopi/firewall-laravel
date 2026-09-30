@@ -191,6 +191,45 @@ final class IntegrationDoctorTest extends TestCase
     }
 
     #[Test]
+    public function the_default_path_source_says_nothing(): void
+    {
+        $this->assertNoFindingMentions('path_source');
+    }
+
+    /**
+     * `script_name` is for WordPress-style direct files; Laravel does not need it (#42).
+     */
+    #[Test]
+    public function script_name_in_a_laravel_app_is_a_warning(): void
+    {
+        config(['app.url' => 'https://example.com', 'firewall.global.path_source' => 'script_name']);
+
+        $this->assertFindingMatches(Diagnosis::WARNING, '/does not need/', $this->diagnose());
+    }
+
+    /**
+     * In a subdirectory without `base_path`, every request resolves to its index.php.
+     *
+     * Then no path rule matches — block rules do not block, negated
+     * conditions match everything — so it is an error, not advice.
+     */
+    #[Test]
+    public function script_name_in_a_subdirectory_without_base_path_is_an_error(): void
+    {
+        config(['app.url' => 'https://example.com/blog/', 'firewall.global.path_source' => 'script_name']);
+
+        $this->assertFindingMatches(Diagnosis::ERROR, '#every request runs /blog/index.php#', $this->diagnose());
+
+        config(['firewall.global.base_path' => '/blog']);
+
+        $this->assertFindingMatches(Diagnosis::WARNING, '/does not need/', $this->diagnose());
+        $this->assertSame([], array_filter(
+            $this->diagnose(),
+            static fn (Diagnosis $d): bool => $d->status === Diagnosis::ERROR && str_contains($d->title, 'path_source')
+        ));
+    }
+
+    #[Test]
     public function it_reports_global_middleware_registration(): void
     {
         $this->assertFindingMatches(Diagnosis::OK, '/registered globally/', $this->diagnose());

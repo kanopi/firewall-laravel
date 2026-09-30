@@ -254,6 +254,17 @@ looks exactly like a firewall that is working.
 genuinely easier to express that way — a long `configs:` include tree, or a file
 written by `firewall:rule`.
 
+**Leave `global.path_source` at its default.** kanopi/firewall 2.34 added
+`path_source: script_name` for sites where the web server runs PHP files other
+than the front controller: WordPress's `wp-login.php`, `xmlrpc.php` and
+`/wp-admin/*.php`, where the default path is `/`. Laravel serves every request
+through `public/index.php`, so the default `pathinfo` is already the requested
+path, including in a subdirectory install. `script_name` gains a Laravel app
+nothing. In a subdirectory without a matching `global.base_path`, it makes every
+request resolve to `/<subdirectory>/index.php`, so no path rule matches.
+`firewall:doctor` reports `script_name` as a warning, and as an error when
+`APP_URL` shows a subdirectory that `base_path` does not name.
+
 ### Logging
 
 The library logs through Monolog and so does Laravel, so the default is to
@@ -436,7 +447,7 @@ Each is wrapped:
 |---|---|---|
 | `firewall:doctor` | Diagnoses the Laravel wiring **and** runs the library's own checks | Something configured is not happening |
 | `firewall:health` | Reports whether the running firewall is working | A rule is not running, or a panic file did not take |
-| `firewall:check` | Would this request be blocked, and by what | The request would be blocked |
+| `firewall:check` | Would this request be blocked, and by what. `--script-name` checks a PHP file served directly, which Laravel apps rarely have | The request would be blocked (1), challenged (2) or redirected (3) |
 | `firewall:blocks` | See who is blocked | Storage cannot answer |
 | `firewall:block` | Block a client **now**, without writing a rule | The address is invalid, or already blocked |
 | `firewall:unblock` | Lift a block, by address or CIDR range, or `--all` | Storage cannot answer |
@@ -670,8 +681,8 @@ are the scripts' own, forwarded unchanged, so a deploy step can gate on
 `php artisan firewall:doctor` exactly as it would on `bin/firewall-doctor`.
 When the wrapper itself fails (the script is missing, or the configuration
 cannot be written out), commands exit 2, except `firewall:check`, which exits
-70 like the script's own internal errors, because 1 and 2 are its "blocked" and
-"challenged" verdicts.
+70 like the script's own internal errors, because 1, 2 and 3 are its "blocked",
+"challenged" and "redirected" verdicts.
 
 Two names differ from the scripts: `--quiet` becomes `--quiet-output` (Symfony
 Console reserves `--quiet` for verbosity), and `firewall:doctor` takes

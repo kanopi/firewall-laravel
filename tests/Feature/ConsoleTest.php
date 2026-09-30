@@ -581,6 +581,64 @@ final class ConsoleTest extends TestCase
      * a command that quietly wrote its configuration somewhere other than
      * where it was told is answering a question nobody asked.
      */
+    /**
+     * `--script-name` reaches the script, and the verdict follows `path_source` (#41).
+     *
+     * The discriminating case: under the default source a direct-file request
+     * is matched as `/`, exactly as in production, so a rule on `/wp-login.php`
+     * does not fire; under `script_name` it does. Without the option forwarded,
+     * the script would match the URL as typed and both would say blocked.
+     */
+    #[Test]
+    public function check_forwards_script_name(): void
+    {
+        config(['firewall.plugins' => [[
+            'plugin' => \Kanopi\Firewall\Plugins\Url::class,
+            'response' => 'block',
+            'name' => 'login',
+            'config' => ['path:/wp-login.php'],
+        ]]]);
+
+        $direct = ['--url' => '/wp-login.php', '--script-name' => '/wp-login.php'];
+
+        $this->artisan('firewall:check', $direct)->assertExitCode(FirewallCommand::EXIT_OK);
+
+        config(['firewall.global.path_source' => 'script_name']);
+
+        $this->artisan('firewall:check', $direct)->assertExitCode(FirewallCommand::EXIT_ERROR);
+    }
+
+    /**
+     * The script's "this names a .php file" note goes to stderr, so `--json` still parses.
+     */
+    #[Test]
+    public function the_direct_file_note_stays_out_of_json_stdout(): void
+    {
+        $output = new SplitConsoleOutput();
+
+        Artisan::call('firewall:check', ['--url' => '/wp-login.php', '--json' => true], $output);
+
+        $this->assertIsArray(json_decode($output->stdout(), true), 'stdout was not JSON: ' . $output->stdout());
+        $this->assertStringContainsString('script-name', $output->stderr());
+    }
+
+    /**
+     * A redirect is its own verdict, exit 3 (2.33.1), forwarded unchanged.
+     */
+    #[Test]
+    public function check_forwards_the_redirect_verdict(): void
+    {
+        config(['firewall.plugins' => [[
+            'plugin' => \Kanopi\Firewall\Plugins\Url::class,
+            'response' => 'redirect',
+            'name' => 'moved',
+            'metadata' => ['redirect_to' => '/status'],
+            'config' => ['path:/old'],
+        ]]]);
+
+        $this->artisan('firewall:check', ['--url' => '/old'])->assertExitCode(3);
+    }
+
     #[Test]
     public function an_unwritable_temp_directory_is_reported(): void
     {
