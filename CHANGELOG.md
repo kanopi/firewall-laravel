@@ -5,6 +5,58 @@ All notable changes to `kanopi/firewall-laravel` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.3.0) — 2026-09-29
+
+Support for kanopi/firewall 2.34: `firewall:check --script-name`, and guidance
+on the library's new `global.path_source`, including a `firewall:doctor` check
+for the one setting that silently breaks path rules in a Laravel app.
+
+### Upgrading
+
+Nothing to change in your configuration. The new library minimum brings three
+library releases with it; these are the changes worth knowing about:
+
+- **`firewall:check` exits `3` for a redirect** (2.33.1). It used to exit `70`.
+  A script that treats every non-zero exit as "blocked" now also treats a
+  redirect as blocked.
+- **A `start-end` range in `global.lockdown_allow` now matches** (2.33.1). It
+  used to match nobody, so an allowlist that was locking out its own office
+  starts serving it. `firewall:doctor` can now report an error on a lockdown
+  allowlist entry that can never match, which turns a deploy gate red.
+- **A rate-limit `key:` naming a capitalised `post`, `cookie` or `query` field
+  now counts per value** (2.33.2). It used to be one counter for everybody.
+  That old shared counter is dropped once, at upgrade.
+- **Block records store a direct file's URL without a trailing slash** (2.34).
+- **A `bot:true` rule now matches Nikto** (2.34). The library requires
+  `matomo/device-detector` ^6.5.2, which adds it.
+
+### Changed
+
+- **Requires `kanopi/firewall` ^2.34** (was ^2.33). No library API this package
+  calls was removed or changed.
+
+### Added
+
+- **`firewall:check --script-name` (#41)** checks a request for a PHP file the
+  web server runs directly, as WordPress serves `/wp-login.php`, the way the
+  site receives it. A Laravel app serves everything through
+  `public/index.php`, so it rarely needs this. The script's note about
+  direct-file URLs goes to stderr, so `--json` output still parses.
+- **`firewall:doctor` checks `global.path_source` (#42).** The library's
+  `script_name` source (2.34) is for sites whose server runs PHP files other
+  than the front controller. A Laravel app does not need it, so it is a
+  warning. It is an **error** when `APP_URL` shows a subdirectory that
+  `global.base_path` does not name: every request then resolves to
+  `/<subdirectory>/index.php`, no path rule matches, and nothing reports it at
+  runtime.
+
+### Documentation
+
+- The README and `config/firewall.php` say to leave `path_source` at its
+  default, and why.
+- `firewall:check`'s exit codes list the redirect verdict (`3`) alongside
+  allowed (`0`), blocked (`1`) and challenged (`2`).
+
 ## [1.2.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.2.0) — 2026-09-27
 
 The last test gaps from the 1.1.0 review are closed. The firewall now runs in
