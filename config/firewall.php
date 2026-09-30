@@ -101,6 +101,13 @@ return [
     | Swoole, whose workers serve real traffic under that SAPI. `artisan serve`
     | is not affected — it runs as "cli-server".
     |
+    | Leave `path_source` unset. The library's `script_name` option (2.34) is
+    | for sites whose web server runs PHP files other than the front
+    | controller, such as WordPress. Every Laravel request goes through
+    | public/index.php, where the default is already right, and `script_name`
+    | without `base_path` breaks every path rule in a subdirectory install.
+    | `firewall:doctor` flags it.
+    |
     */
 
     'global' => [

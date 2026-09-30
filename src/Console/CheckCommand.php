@@ -21,6 +21,15 @@ namespace Kanopi\Firewall\Laravel\Console;
  *
  * `--lint` answers a different question entirely and takes no request: what is
  * wrong with these rules, regardless of any request.
+ *
+ * `--script-name` (2.34) checks a request for a PHP file the web server runs
+ * directly, as WordPress serves `/wp-login.php`. A Laravel app serves every
+ * request through `public/index.php`, which is the default, so it rarely needs
+ * it (#41).
+ *
+ * Exit codes are the script's own verdicts: 0 allowed, 1 blocked,
+ * 2 challenged, 3 redirected (2.33.1). 70 is an internal error, from the
+ * script or from this wrapper.
  */
 final class CheckCommand extends FirewallCommand
 {
@@ -33,6 +42,7 @@ final class CheckCommand extends FirewallCommand
         {--method= : HTTP method. Default GET, or POST when --body is given}
         {--header=* : Request header as NAME:VALUE}
         {--body= : Request body}
+        {--script-name= : The PHP file the web server runs for this URL. Default: the front controller}
         {--explain : Show every plugin that evaluated, with result and timing}
         {--lint : Report what is wrong with the rules and exit, without evaluating a request}
         {--live-storage : Consult the configured storage instead of a throwaway store}
@@ -47,8 +57,9 @@ final class CheckCommand extends FirewallCommand
     /**
      * `bin/firewall-check`'s internal-error code.
      *
-     * 0, 1 and 2 are the check's verdicts — allowed, blocked, challenged — so
-     * this wrapper failing must not come out as any of them (#11).
+     * 0 to 3 are the check's verdicts — allowed, blocked, challenged,
+     * redirected — so this wrapper failing must not come out as any of them
+     * (#11).
      */
     public const EXIT_INTERNAL = 70;
 
@@ -67,7 +78,7 @@ final class CheckCommand extends FirewallCommand
             'firewall-check',
             $this->forwardOptions(
                 flags: ['explain', 'lint', 'live-storage', 'json'],
-                values: ['ip', 'url', 'method', 'body'],
+                values: ['ip', 'url', 'method', 'body', 'script-name'],
                 repeatable: ['header']
             ),
             configAsOption: true

@@ -75,6 +75,7 @@ final class IntegrationDoctor
             [$this->checkMode()],
             $this->checkCliSapi(),
             $this->checkTrustedProxies(),
+            $this->checkPathSource(),
             $this->checkMiddleware(),
             $this->checkChallenge(),
             $this->checkOctane(),
@@ -271,30 +272,96 @@ final class IntegrationDoctor
     }
 
     /**
-     * `global.trusted_proxies` as the library will see it (2.33).
-     *
-     * Read from the merged configuration rather than from `firewall.global`,
-     * because a preset or an extra YAML file can set it too, and the library
-     * acts on whichever of them wins the merge.
-     *
-     * `Config::load()` is lenient: a file it cannot read is recorded rather
-     * than thrown, and the config check below reports it. So there is nothing
-     * to catch here, and a catch would be dead code.
+     * `global.trusted_proxies` as the library will see it (2.33), from the
+     * merged configuration (see `effectiveGlobal()`).
      *
      * @return array<int, mixed>
      *   Empty when nothing declares it.
      */
     private function firewallTrustedProxies(): array
     {
-        $global = Config::load($this->translator->configs())['global'] ?? null;
-
-        $declared = is_array($global) ? ($global['trusted_proxies'] ?? null) : null;
+        $declared = $this->effectiveGlobal()['trusted_proxies'] ?? null;
 
         if (in_array($declared, [null, [], ''], true)) {
             return [];
         }
 
         return is_array($declared) ? array_values($declared) : [$declared];
+    }
+
+    /**
+     * Is `global.path_source` set to something a Laravel app does not want? (2.34, #42)
+     *
+     * `script_name` is for sites where the web server runs PHP files other than
+     * the front controller — WordPress's `wp-login.php` and `/wp-admin/*.php`.
+     * Every Laravel request goes through `public/index.php`, where the default
+     * `pathinfo` is already the requested path. So `script_name` buys a Laravel
+     * app nothing, and it costs a great deal in one case: served from a
+     * subdirectory without `global.base_path`, every request resolves to
+     * `/<subdirectory>/index.php`. No path rule matches, block rules stop
+     * blocking and negated conditions match everything, with nothing reported
+     * at runtime.
+     *
+     * An error when `APP_URL` shows that subdirectory and `base_path` does not
+     * name it, because then that is what is happening. A warning otherwise,
+     * because it is one move to a subdirectory away. Silent on the default.
+     *
+     * @return array<int, Diagnosis>
+     */
+    private function checkPathSource(): array
+    {
+        $global = $this->effectiveGlobal();
+
+        if (($global['path_source'] ?? null) !== 'script_name') {
+            return [];
+        }
+
+        $appPath = rtrim((string) parse_url($this->settings->text('app.url'), PHP_URL_PATH), '/');
+        $basePath = is_string($global['base_path'] ?? null) ? rtrim($global['base_path'], '/') : '';
+
+        if ($appPath !== '' && $basePath !== $appPath) {
+            return [Diagnosis::error(
+                'global.path_source is script_name and base_path does not name the subdirectory',
+                sprintf(
+                    'APP_URL puts this application under %1$s, so every request runs %1$s/index.php, '
+                    . 'and with path_source: script_name that is the path every rule sees. No path '
+                    . 'condition matches: block rules do not block and negated conditions match '
+                    . 'everything. Remove path_source (the default, pathinfo, is right for Laravel), '
+                    . 'or set global.base_path to %1$s.',
+                    $appPath
+                ),
+                'docs/configuration/global.md#path-source'
+            )];
+        }
+
+        return [Diagnosis::warning(
+            'global.path_source is script_name, which a Laravel app does not need',
+            'script_name is for sites where the web server runs PHP files other than index.php, '
+            . 'such as WordPress. Every Laravel request goes through public/index.php, where the '
+            . 'default, pathinfo, is already the requested path. It gives the same answer here '
+            . 'today, but if the application is ever served from a subdirectory without '
+            . 'global.base_path, every request resolves to that subdirectory\'s index.php and no '
+            . 'path rule matches. Remove it.',
+            'docs/configuration/global.md#path-source'
+        )];
+    }
+
+    /**
+     * The merged `global:` section, as the library will see it.
+     *
+     * Read from the merged configuration rather than from `firewall.global`,
+     * because a preset or an extra YAML file can set these keys too, and the
+     * library acts on whichever of them wins the merge. `Config::load()` is
+     * lenient — a file it cannot read is recorded, not thrown, and the config
+     * check reports it — so there is nothing to catch here.
+     *
+     * @return array<mixed>
+     */
+    private function effectiveGlobal(): array
+    {
+        $global = Config::load($this->translator->configs())['global'] ?? null;
+
+        return is_array($global) ? $global : [];
     }
 
     /**
