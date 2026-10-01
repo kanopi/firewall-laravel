@@ -163,10 +163,10 @@ final class FirewallResponder
      * treat a 4xx body as a failure to be discarded or reported, and any of
      * them doing so breaks the round-trip.
      *
-     * `Cache-Control: no-store` matters more than the status. The interstitial
-     * carries per-visitor signed state; a shared cache holding one would serve
-     * the same challenge — and in a stateless provider, the same answer — to
-     * everyone behind it.
+     * The no-cache headers matter more than the status (see
+     * `noStoreHeaders()`). The interstitial carries per-visitor signed state;
+     * a shared cache holding one would serve the same challenge — and in a
+     * stateless provider, the same answer — to everyone behind it.
      */
     public function challenge(Request $request, ChallengeRequiredException $exception): Response
     {
