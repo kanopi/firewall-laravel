@@ -93,6 +93,23 @@ final class MiddlewareTest extends TestCase
         $this->get('/allowed')->assertStatus(429);
     }
 
+    /**
+     * The HTML block page is kept out of every cache (2.34.1).
+     *
+     * It sent no cache header at all: behind a CDN, one visitor's block could
+     * be served to everybody requesting that URL.
+     */
+    #[Test]
+    public function a_block_page_is_not_cacheable(): void
+    {
+        $this->blockIp('203.0.113.9');
+
+        $response = $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9'])->get('/allowed');
+
+        $this->assertSame(400, $response->getStatusCode());
+        $this->assertNotCacheable($response->baseResponse);
+    }
+
     #[Test]
     public function a_blocked_api_client_gets_json(): void
     {
@@ -101,7 +118,7 @@ final class MiddlewareTest extends TestCase
         $response = $this->getJson('/allowed');
 
         $response->assertStatus(400);
-        $response->assertHeader('Cache-Control', 'no-store, private');
+        $this->assertNotCacheable($response->baseResponse);
         $this->assertArrayHasKey('message', (array) $response->json());
     }
 

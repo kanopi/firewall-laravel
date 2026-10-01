@@ -66,6 +66,20 @@ final class LockdownTest extends TestCase
     }
 
     /**
+     * A lockdown refusal is kept out of every cache (2.34.1).
+     *
+     * It sent no cache header at all, so a CDN could hand the refusal to the
+     * allowlisted visitors it exists to let through.
+     */
+    #[Test]
+    public function a_lockdown_refusal_is_not_cacheable(): void
+    {
+        config(['firewall.global.mode' => 'lockdown']);
+
+        $this->assertNotCacheable($this->get('/anything')->assertStatus(503)->baseResponse);
+    }
+
+    /**
      * The allowlist still gets through — that is the whole point of it.
      */
     #[Test]

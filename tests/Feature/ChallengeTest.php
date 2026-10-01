@@ -84,7 +84,7 @@ final class ChallengeTest extends TestCase
         // interstitial is a working page the visitor has to interact with.
         $response->assertOk();
         $response->assertDontSee('through');
-        $response->assertHeader('Cache-Control', 'no-store, private');
+        $this->assertNotCacheable($response->baseResponse);
         $response->assertSee('action="/_firewall/challenge"', false);
         $response->assertSee(MathChallengeProvider::ANSWER_FIELD, false);
     }
@@ -127,6 +127,32 @@ final class ChallengeTest extends TestCase
             ->get('/gated')
             ->assertOk()
             ->assertSee('through');
+    }
+
+    /**
+     * The response that sets the pass cookie is kept out of every cache (2.34.1).
+     *
+     * A cached copy would hand one visitor's pass token to the next.
+     */
+    #[Test]
+    public function the_pass_token_response_is_not_cacheable(): void
+    {
+        $interstitial = $this->get('/gated');
+
+        $this->assertNotCacheable($this->postSolution($interstitial, $this->answerFrom($interstitial))->baseResponse);
+    }
+
+    /**
+     * `challenge.notice` reaches an API client, which gets no page to read it on (2.35).
+     */
+    #[Test]
+    public function a_json_challenge_carries_the_configured_notices(): void
+    {
+        config(['firewall.challenge.notice' => 'Having trouble? Email help@example.com.']);
+
+        $this->getJson('/gated')
+            ->assertStatus(403)
+            ->assertJsonPath('challenge.notices', ['Having trouble? Email help@example.com.']);
     }
 
     #[Test]

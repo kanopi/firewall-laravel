@@ -108,6 +108,30 @@ final class ResponderTest extends TestCase
     }
 
     /**
+     * Notices arrive as a list from the library, and as a string where its declared type allows one.
+     */
+    #[Test]
+    public function json_challenge_notices_accept_a_list_or_a_string(): void
+    {
+        $request = Request::create('/gated', 'GET', server: ['HTTP_ACCEPT' => 'application/json']);
+        foreach ([
+            'list' => [['First.', 'Second.'], ['First.', 'Second.']],
+            'string' => ['Only one.', ['Only one.']],
+            'empty string' => ['', []],
+            'absent' => [null, []],
+        ] as $case => [$given, $expected]) {
+            $context = $given === null ? [] : ['notices' => $given];
+            $body = json_decode((string) $this->responder()->challenge(
+                $request,
+                new ChallengeRequiredException('Challenge required', null, null, '', $context)
+            )->getContent(), true);
+
+            $this->assertIsArray($body, $case);
+            $this->assertSame($expected, $body['challenge']['notices'], $case);
+        }
+    }
+
+    /**
      * A JSON client is told the URL the interstitial itself would post to (#14).
      *
      * That honours `challenge.submit_url` and a subdirectory base path, where
