@@ -917,17 +917,17 @@ not open a lockdown.
 
 | PHP | Laravel 12 | Laravel 13 |
 |---|---|---|
-| 8.2 | ✅ 366 tests | needs PHP 8.3 |
-| 8.3 | ✅ 366 tests | ✅ 366 tests |
-| 8.4 | ✅ 366 tests | ✅ 366 tests |
-| 8.5 | ✅ 366 tests | ✅ 366 tests |
+| 8.2 | ✅ 377 tests | needs PHP 8.3 |
+| 8.3 | ✅ 377 tests | ✅ 377 tests |
+| 8.4 | ✅ 377 tests | ✅ 377 tests |
+| 8.5 | ✅ 377 tests | ✅ 377 tests |
 
 Measured, not asserted: every ✅ is a run of the full suite in a container for
 that PHP version, against `laravel/framework` pinned to that major. Reproduce it
 with `composer test:matrix`, which is what produced the table.
 
-Exact versions at 1.2.0: `laravel/framework` v12.69.2 and v13.33.0,
-`kanopi/firewall` 2.33.0, PHP 8.2.32 / 8.3.32 / 8.4.23 / 8.5.8 (the official
+Exact versions at 1.3.0: `laravel/framework` v12.69.3 and v13.34.0,
+`kanopi/firewall` 2.36.0, PHP 8.2.32 / 8.3.32 / 8.4.23 / 8.5.8 (the official
 `php:<version>-cli` images).
 
 ### Why not Laravel 10 or 11
