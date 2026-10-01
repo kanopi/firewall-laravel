@@ -89,7 +89,7 @@ final class ResponseTypesTest extends TestCase
 
         // A redirect a rule chose is about this visitor now; a shared cache
         // serving it to the next one would redirect somebody nothing matched.
-        $this->get('/moved')->assertHeader('Cache-Control', 'no-store, private');
+        $this->assertNotCacheable($this->get('/moved')->baseResponse);
     }
 
     #[Test]

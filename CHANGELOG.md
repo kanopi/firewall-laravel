@@ -5,16 +5,26 @@ All notable changes to `kanopi/firewall-laravel` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.3.0) — 2026-09-29
+## [1.3.0](https://github.com/kanopi/firewall-laravel/releases/tag/v1.3.0) — 2026-09-30
 
-Support for kanopi/firewall 2.34: `firewall:check --script-name`, and guidance
-on the library's new `global.path_source`, including a `firewall:doctor` check
-for the one setting that silently breaks path rules in a Laravel app.
+Support for kanopi/firewall 2.36. Every firewall response is now kept out of
+CDN caches, which matters most on Pantheon. This release also adds
+`firewall:check --script-name`, and guidance on the library's new
+`global.path_source`, including a `firewall:doctor` check for the one setting
+that silently breaks path rules in a Laravel app.
 
 ### Upgrading
 
-Nothing to change in your configuration. The new library minimum brings three
-library releases with it; these are the changes worth knowing about:
+Nothing to change in your configuration. **On Pantheon, set
+`FIREWALL_CHALLENGE_COOKIE=STYXKEY_fw_challenge_pass`**: Pantheon strips cookies
+whose names don't start with `STYXKEY_`, so with the default name a visitor who
+solves a challenge is challenged again forever.
+
+Firewall responses now send a full set of no-cache headers. A site that was
+deliberately caching a block or challenge page will stop, which is the point.
+
+The new library minimum brings seven library releases with it. These are the
+changes worth knowing about:
 
 - **`firewall:check` exits `3` for a redirect** (2.33.1). It used to exit `70`.
   A script that treats every non-zero exit as "blocked" now also treats a
@@ -29,14 +39,49 @@ library releases with it; these are the changes worth knowing about:
 - **Block records store a direct file's URL without a trailing slash** (2.34).
 - **A `bot:true` rule now matches Nikto** (2.34). The library requires
   `matomo/device-detector` ^6.5.2, which adds it.
+- **ASN equality rules start matching** (2.35). `asn:16509`, `asn:AS16509` and
+  `asn@in:…` never matched, so a block rule on a network starts blocking it.
+  **`asn@not_equals:X` stops matching network X**, which it used to match along
+  with every other visitor. Check any `not_equals` ASN rule.
+- **The path every rule sees is normalised** (2.35). Doubled slashes, `.`
+  segments, percent-encoded unreserved characters and `;params` no longer
+  change what a rule matches; `..` is kept as written. Logs and block records
+  show the normalised path.
+- **`presets/wordpress.yml` and `search-bots.yml` are at Preset-Version 2**
+  (2.35). They match WordPress paths at any depth, which is wider, and no
+  longer block a post slug that only starts with `wp-login` or `wp-admin`.
+- **Rate-limit paths ignore case** (2.35), as URL rules already did.
+- **`firewall:check --lint` may report new warnings** (2.35, 2.35.1) on a config
+  it used to pass, for a rate-limit entry that never runs because an earlier
+  entry takes its requests. Those entries never ran.
 
 ### Changed
 
-- **Requires `kanopi/firewall` ^2.34** (was ^2.33). No library API this package
+- **Requires `kanopi/firewall` ^2.36** (was ^2.33). No library API this package
   calls was removed or changed.
+
+### Fixed
+
+- **Firewall responses could be cached by a CDN.** The HTML block and lockdown
+  pages sent no cache header at all, and the other responses sent only
+  `Cache-Control: no-store, private`, which some CDNs (Pantheon's among them)
+  cache anyway. A cached challenge page gives every visitor the same
+  single-use challenge, so all but the first are refused in a loop; a cached
+  block page refuses everyone at that URL. Every response this package writes
+  now carries the library's `NoStore::HEADERS` (2.34.1): `private, no-store,
+  no-cache, must-revalidate, max-age=0`, plus `Pragma`, `Expires`,
+  `Surrogate-Control` and `CDN-Cache-Control`. This covers block, lockdown,
+  redirect, challenge, and the response that issues the pass.
 
 ### Added
 
+- **`challenge.notices` in JSON challenge responses.** The library's
+  `challenge.notice` (2.35), and notices a listener adds through
+  `RequestChallenged::addNotice()`, appear on the HTML challenge page
+  automatically. An API client gets no page, so they are now returned in the
+  JSON body too.
+- **`FIREWALL_CHALLENGE_COOKIE`** sets the pass cookie's name without editing
+  the published config, for Pantheon's `STYXKEY_` prefix.
 - **`firewall:check --script-name` (#41)** checks a request for a PHP file the
   web server runs directly, as WordPress serves `/wp-login.php`, the way the
   site receives it. A Laravel app serves everything through
@@ -54,6 +99,8 @@ library releases with it; these are the changes worth knowing about:
 
 - The README and `config/firewall.php` say to leave `path_source` at its
   default, and why.
+- The README and `config/firewall.php` explain the Pantheon cookie prefix,
+  `challenge.notice`, and the no-cache headers.
 - `firewall:check`'s exit codes list the redirect verdict (`3`) alongside
   allowed (`0`), blocked (`1`) and challenged (`2`).
 

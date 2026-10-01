@@ -207,6 +207,22 @@ intercept, which means challenges are not configured and this path should look
 like what it is; and it is registered **only when a path is configured**, so
 clearing `challenge.path` removes the route rather than binding `POST /`.
 
+The pass cookie has to come back, too. **On Pantheon, its name must start with
+`STYXKEY_`**, because Pantheon's edge strips every other cookie. With the
+default `fw_challenge_pass`, a visitor solves the challenge, never presents the
+pass, and is challenged again forever. Set
+`FIREWALL_CHALLENGE_COOKIE=STYXKEY_fw_challenge_pass`. `challenge.notice`
+(kanopi/firewall 2.35) puts a line of plain text above the challenge form, such
+as a contact address, for a visitor stuck in a loop like this. It is shown on
+the HTML page and returned as `challenge.notices` to JSON clients.
+
+Every firewall response (block, lockdown, redirect, challenge, and the response
+that issues the pass) carries the library's full no-cache header set, including
+`Surrogate-Control` and `CDN-Cache-Control`. `no-store` alone is not enough for
+some CDNs, Pantheon's among them. A cached challenge page hands every visitor
+the same single-use challenge, and a cached block page refuses everyone who
+requests that URL.
+
 ## Configuration
 
 `config/firewall.php` uses the library's own section names — `global`, `storage`,

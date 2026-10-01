@@ -20,6 +20,7 @@ use Kanopi\Firewall\Exception\FirewallException;
 use Kanopi\Firewall\Exception\FirewallLockdownException;
 use Kanopi\Firewall\Exception\FirewallRedirectException;
 use Kanopi\Firewall\Laravel\Support\Settings;
+use Kanopi\Firewall\Utility\NoStore;
 use Kanopi\Firewall\Utility\ChallengePasses;
 use Symfony\Component\HttpFoundation\Cookie;
 use Symfony\Component\HttpFoundation\Response;
@@ -99,7 +100,7 @@ final class FirewallResponder
                     : null,
             ],
             $status,
-            $headers
+            $headers + $this->noStoreHeaders()
         );
     }
 
@@ -179,6 +180,7 @@ final class FirewallResponder
                 'message' => $exception->getMessage(),
                 'challenge' => [
                     'path' => $this->submitUrl($exception),
+                    'notices' => $this->notices($exception),
                     'header' => $this->settings->text('firewall.challenge.header_name'),
                 ],
             ], Response::HTTP_FORBIDDEN, $this->noStoreHeaders());
@@ -255,6 +257,38 @@ final class FirewallResponder
     private function plainMessage(FirewallException $exception): string
     {
         return html_entity_decode($exception->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
+    /**
+     * Notices for the visitor: `challenge.notice` and any a listener added (2.35).
+     *
+     * The HTML interstitial renders them itself. An API client gets no page,
+     * so without this it would lose exactly the line meant to explain why it
+     * keeps being challenged.
+     *
+     * @return array<int, string>
+     */
+    private function notices(ChallengeRequiredException $exception): array
+    {
+        $notices = $this->contextValue($exception, 'notices');
+
+        if (is_string($notices)) {
+            return $notices === '' ? [] : [$notices];
+        }
+
+        return is_array($notices) ? array_values(array_filter($notices, is_string(...))) : [];
+    }
+
+    /**
+     * One value from the exception's render context, untyped.
+     *
+     * The library declares the context `array<string, string>`, but since 2.35
+     * `notices` in it is a list. Read through `mixed` so the narrowing above
+     * reflects what arrives rather than what the docblock claims.
+     */
+    private function contextValue(ChallengeRequiredException $exception, string $key): mixed
+    {
+        return $exception->getRenderContext()[$key] ?? null;
     }
 
     /**
@@ -399,11 +433,27 @@ final class FirewallResponder
     }
 
     /**
+     * The headers that keep a firewall response out of every cache.
+     *
+     * The library's own set (2.34.1), used verbatim so the two cannot drift.
+     * Every response written here is a decision about one visitor — a block,
+     * a lockdown refusal, a redirect, a challenge, a pass token — and a cache
+     * holding one serves it to everybody else. `no-store` alone was not
+     * enough: some CDNs, Pantheon's Global CDN among them, cache a response
+     * marked only that, and a cached challenge page hands every visitor the
+     * same single-use challenge, so all but the first are refused in a loop.
+     * `private` and `max-age=0` are what shared caches reliably honour;
+     * `Surrogate-Control` and `CDN-Cache-Control` are for CDNs that read
+     * those first.
+     *
+     * The HTML block and lockdown pages carried no cache header at all until
+     * this, the same gap the library closed for its own block page.
+     *
      * @return array<string, string>
      */
     private function noStoreHeaders(): array
     {
-        return ['Cache-Control' => 'no-store, private'];
+        return NoStore::HEADERS;
     }
 
     private function viewName(string $key): string

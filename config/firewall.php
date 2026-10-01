@@ -269,13 +269,21 @@ return [
     | cannot carry a token. With per-route registration it is not automatic,
     | which is what `middleware.register_challenge_route` below is for.
     |
+    | On Pantheon, start `cookie_name` with `STYXKEY_` (for example
+    | FIREWALL_CHALLENGE_COOKIE=STYXKEY_fw_challenge_pass). Pantheon's edge
+    | strips other cookies, so the pass never comes back and every visitor who
+    | solves a challenge is challenged again, forever.
+    |
+    | `notice` (2.35) is plain text shown above the challenge form, such as a
+    | contact address, for a visitor who keeps being challenged.
+    |
     */
 
     'challenge' => [
         'provider' => env('FIREWALL_CHALLENGE_PROVIDER', 'math'),
         'secret' => env('FIREWALL_CHALLENGE_SECRET', ''),
         'path' => env('FIREWALL_CHALLENGE_PATH', '/_firewall/challenge'),
-        'cookie_name' => 'fw_challenge_pass',
+        'cookie_name' => env('FIREWALL_CHALLENGE_COOKIE', 'fw_challenge_pass'),
         'header_name' => 'X-Firewall-Challenge',
         'provider_options' => [],
         'audience' => env('FIREWALL_CHALLENGE_AUDIENCE', ''),

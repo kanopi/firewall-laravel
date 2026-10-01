@@ -86,6 +86,25 @@ abstract class TestCase extends Orchestra
     }
 
     /**
+     * Assert a response carries the library's full no-cache header set (2.34.1).
+     *
+     * Directive by directive, because Symfony re-orders `Cache-Control`.
+     */
+    protected function assertNotCacheable(\Symfony\Component\HttpFoundation\Response $response): void
+    {
+        $cacheControl = (string) $response->headers->get('Cache-Control');
+
+        foreach (['private', 'no-store', 'no-cache', 'must-revalidate', 'max-age=0'] as $directive) {
+            $this->assertStringContainsString($directive, $cacheControl, sprintf('Cache-Control lacks %s: %s', $directive, $cacheControl));
+        }
+
+        $this->assertSame('no-cache', $response->headers->get('Pragma'));
+        $this->assertSame('0', $response->headers->get('Expires'));
+        $this->assertSame('no-store', $response->headers->get('Surrogate-Control'));
+        $this->assertSame('no-store', $response->headers->get('CDN-Cache-Control'));
+    }
+
+    /**
      * Configure one rule that blocks an address, and nothing else.
      *
      * @param array<string, mixed> $overrides
